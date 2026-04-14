@@ -57,10 +57,10 @@ export function registerJournalHandlers() {
     const stmt = db.prepare(`
       INSERT INTO Journals
         (entryDateTime, exitDateTime, symbol, session, position, tf,
-         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias)
+         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating)
       VALUES
         (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
-         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias)
+         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating)
     `)
     const insertLink = db.prepare(
       'INSERT OR IGNORE INTO Journal_Strategies (journalId, strategyId) VALUES (?, ?)'
@@ -96,9 +96,20 @@ export function registerJournalHandlers() {
 
   // ── Dashboard query with dynamic multi-filters ────────────────────────────
 
-  handle('journals:query', (_event, filters = {}) => {
-    const { sessions = [], rrTypes = [], symbols = [], setupId, strategyId, dateFrom, dateTo } =
-      filters
+  // Shared filter builder for list and summary
+  function buildFilterConditions(filters) {
+    const {
+      sessions = [],
+      rrTypes = [],
+      symbols = [],
+      setupId,
+      strategyId,
+      customTagId,
+      hasNews,
+      colorRatings = [],
+      dateFrom,
+      dateTo
+    } = filters
 
     const conditions = []
     const params = []
@@ -123,6 +134,18 @@ export function registerJournalHandlers() {
       conditions.push('j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId = ?)')
       params.push(strategyId)
     }
+    if (customTagId) {
+      conditions.push('j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId = ?)')
+      params.push(customTagId)
+    }
+    if (hasNews !== null && hasNews !== undefined) {
+      conditions.push('j.hasNews = ?')
+      params.push(Number(hasNews))
+    }
+    if (colorRatings.length > 0) {
+      conditions.push(`j.colorRating IN (${colorRatings.map(() => '?').join(',')})`)
+      params.push(...colorRatings)
+    }
     if (dateFrom) {
       conditions.push('j.entryDateTime >= ?')
       params.push(dateFrom)
@@ -131,7 +154,11 @@ export function registerJournalHandlers() {
       conditions.push('j.entryDateTime <= ?')
       params.push(dateTo)
     }
+    return { conditions, params }
+  }
 
+  handle('journals:query', (_event, filters = {}) => {
+    const { conditions, params } = buildFilterConditions(filters)
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     const rows = db
@@ -143,32 +170,20 @@ export function registerJournalHandlers() {
   // ── Summary stats ─────────────────────────────────────────────────────────
 
   handle('journals:getSummary', (_event, filters = {}) => {
-    const { sessions = [], rrTypes = [], symbols = [], setupId, strategyId, dateFrom, dateTo } =
-      filters
-
-    const conditions = []
-    const params = []
-    if (sessions.length > 0)   { conditions.push(`session IN (${sessions.map(()=>'?').join(',')})`)  ; params.push(...sessions) }
-    if (rrTypes.length > 0)    { conditions.push(`rrType  IN (${rrTypes.map(()=>'?').join(',')})`)   ; params.push(...rrTypes) }
-    if (symbols.length > 0)    { conditions.push(`symbol  IN (${symbols.map(()=>'?').join(',')})`)   ; params.push(...symbols) }
-    if (setupId)               { conditions.push('setupId = ?')          ; params.push(setupId) }
-    if (strategyId)            { conditions.push('id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId = ?)') ; params.push(strategyId) }
-    if (dateFrom)              { conditions.push('entryDateTime >= ?')   ; params.push(dateFrom) }
-    if (dateTo)                { conditions.push('entryDateTime <= ?')   ; params.push(dateTo) }
-
+    const { conditions, params } = buildFilterConditions(filters)
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     return db.prepare(`
       SELECT
         COUNT(*)                                                AS total,
-        SUM(CASE WHEN result = 'Win'       THEN 1 ELSE 0 END) AS wins,
-        SUM(CASE WHEN result = 'Loss'      THEN 1 ELSE 0 END) AS losses,
-        SUM(CASE WHEN result = 'Breakeven' THEN 1 ELSE 0 END) AS breakevens,
+        SUM(CASE WHEN j.result = 'Win'       THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN j.result = 'Loss'      THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN j.result = 'Breakeven' THEN 1 ELSE 0 END) AS breakevens,
         ROUND(
-          100.0 * SUM(CASE WHEN result = 'Win' THEN 1 ELSE 0 END) /
-          NULLIF(SUM(CASE WHEN result IN ('Win','Loss') THEN 1 ELSE 0 END), 0)
+          100.0 * SUM(CASE WHEN j.result = 'Win' THEN 1 ELSE 0 END) /
+          NULLIF(SUM(CASE WHEN j.result IN ('Win','Loss') THEN 1 ELSE 0 END), 0)
         , 2) AS winRate
-      FROM Journals
+      FROM Journals j
       ${where}
     `).get(...params)
   })
@@ -199,6 +214,8 @@ export function registerJournalHandlers() {
         notes         = @notes,
         setupId       = @setupId,
         directionBias = @directionBias,
+        hasNews       = @hasNews,
+        colorRating   = @colorRating,
         updatedAt     = datetime('now')
       WHERE id = @id
     `)

@@ -1,13 +1,39 @@
 <script setup>
-import { ref, computed, onMounted, onActivated, watch } from 'vue'
+import { ref, computed, onMounted, onActivated, watch, nextTick, onUnmounted } from 'vue'
+import {
+  Chart,
+  LineController,
+  LineElement,
+  PointElement,
+  BarController,
+  BarElement,
+  LinearScale,
+  CategoryScale,
+  Filler,
+  Tooltip,
+  Legend
+} from 'chart.js'
+
+Chart.register(
+  LineController,
+  LineElement,
+  PointElement,
+  BarController,
+  BarElement,
+  LinearScale,
+  CategoryScale,
+  Filler,
+  Tooltip,
+  Legend
+)
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const ALL_SESSIONS   = ['New York', 'London', 'London Close', 'Asia', 'Tokyo']
-const ALL_RR_TYPES   = ['RR 1:2', 'RR 1:3 Top 50%', 'RR 1:3 Bottom 50%', 'RR 1:4', 'RR 1:5']
-const POSITIONS      = ['Buy', 'Sell']
+const ALL_SESSIONS = ['New York', 'London', 'London Close', 'Asia', 'Tokyo']
+const rrTypeOptions = ref([]) // replaces hardcoded ALL_RR_TYPES
+const POSITIONS = ['Buy', 'Sell']
 const DIRECTION_BIAS = ['Bullish', 'Bearish']
-const TF_OPTIONS     = ['M1', 'M3', 'M5', 'M15', 'M30', 'H1', 'H4']
-const RESULTS        = ['Win', 'Loss', 'Breakeven']
+const TF_OPTIONS = ['M1', 'M3', 'M5', 'M15', 'M30', 'H1', 'H4']
+const RESULTS = ['Win', 'Loss', 'Breakeven']
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const setups = ref([])
@@ -20,6 +46,9 @@ const filters = ref({
   symbols: [],
   setupId: '',
   strategyId: '',
+  customTagId: '',
+  hasNews: null, // null = all, 1 = yes, 0 = no
+  colorRatings: [],
   dateFrom: '',
   dateTo: ''
 })
@@ -32,24 +61,27 @@ const loadError = ref('')
 const nativeDateFromRef = ref(null)
 const nativeDateToRef = ref(null)
 
+const filterCustomTags = ref([])
+const COLOR_OPTIONS = ['red', 'orange', 'yellow', 'green']
+
 // ── Edit Modal ────────────────────────────────────────────────────────────────
-const showEditModal            = ref(false)
-const editLoading              = ref(false)
-const editError                = ref('')
-const editRow                  = ref(null)
-const editForm                 = ref({})
-const editStrategies           = ref([])
-const editAllCustomTags        = ref([])
-const editSelectedStrategyIds  = ref([])
+const showEditModal = ref(false)
+const editLoading = ref(false)
+const editError = ref('')
+const editRow = ref(null)
+const editForm = ref({})
+const editStrategies = ref([])
+const editAllCustomTags = ref([])
+const editSelectedStrategyIds = ref([])
 const editSelectedCustomTagIds = ref([])
-const editImageUrlInputs       = ref([''])
-const nativeEditEntryRef       = ref(null)
-const nativeEditExitRef        = ref(null)
+const editImageUrlInputs = ref([''])
+const nativeEditEntryRef = ref(null)
+const nativeEditExitRef = ref(null)
 
 // ── Image Gallery ─────────────────────────────────────────────────────────────
-const showGallery   = ref(false)
+const showGallery = ref(false)
 const galleryImages = ref([])
-const galleryIndex  = ref(0)
+const galleryIndex = ref(0)
 
 // ── Account Settings ──────────────────────────────────────────────────────────
 const initialBalance = ref(500)
@@ -57,6 +89,21 @@ const riskPercent = ref(6) // percent, e.g. 6 means 6%
 const settingsLoaded = ref(false)
 const customColumnName = ref('Custom Tag')
 const dbPath = ref('')
+
+const showCharts = ref(false) // toggle visibility
+const pnlGroupBy = ref('day') // day, symbol, session, rrType, rating, news
+const equityChartCanvas = ref(null)
+const drawdownChartCanvas = ref(null)
+const pnlChartCanvas = ref(null)
+let equityChart = null
+let drawdownChart = null
+let pnlChart = null
+
+onUnmounted(() => {
+  if (equityChart) equityChart.destroy()
+  if (drawdownChart) drawdownChart.destroy()
+  if (pnlChart) pnlChart.destroy()
+})
 
 async function loadSettings() {
   try {
@@ -210,18 +257,28 @@ const enhancedSummary = computed(() => {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(async () => {
   await loadSettings()
-  const [s, sym] = await Promise.all([window.api.getAllSetups(), window.api.getDistinctSymbols()])
+  const [s, sym, rr] = await Promise.all([
+    window.api.getAllSetups(),
+    window.api.getDistinctSymbols(),
+    window.api.getAllRRTypes()
+  ])
   setups.value = s
   symbolOptions.value = sym
+  rrTypeOptions.value = rr.map((r) => r.name)
 })
 onActivated(runQuery)
 
-// ── Strategy dropdown filtered by setup ──────────────────────────────────────
+// ── Strategy & Tag dropdown filtered by setup ────────────────────────────────
 async function onSetupChange() {
   filters.value.strategyId = ''
+  filters.value.customTagId = ''
   strategies.value = []
+  filterCustomTags.value = []
   if (filters.value.setupId) {
-    strategies.value = await window.api.getStrategiesForSetup(Number(filters.value.setupId))
+    ;[strategies.value, filterCustomTags.value] = await Promise.all([
+      window.api.getStrategiesForSetup(Number(filters.value.setupId)),
+      window.api.getCustomTagsForSetup(Number(filters.value.setupId))
+    ])
   }
 }
 
@@ -238,6 +295,12 @@ function toggleSymbolOption(sym) {
   const idx = filters.value.symbols.indexOf(sym)
   if (idx === -1) filters.value.symbols.push(sym)
   else filters.value.symbols.splice(idx, 1)
+}
+
+function toggleColorFilter(c) {
+  const idx = filters.value.colorRatings.indexOf(c)
+  if (idx === -1) filters.value.colorRatings.push(c)
+  else filters.value.colorRatings.splice(idx, 1)
 }
 
 function normalizeThaiDateInput(raw) {
@@ -261,11 +324,7 @@ function parseThaiDisplayDateToIso(displayDate) {
   const year = Number(m[3])
 
   const d = new Date(year, month - 1, day)
-  if (
-    d.getFullYear() !== year ||
-    d.getMonth() !== month - 1 ||
-    d.getDate() !== day
-  ) {
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
     return null
   }
 
@@ -320,6 +379,9 @@ async function runQuery() {
       symbols: [...filters.value.symbols],
       setupId: filters.value.setupId ? Number(filters.value.setupId) : null,
       strategyId: filters.value.strategyId ? Number(filters.value.strategyId) : null,
+      customTagId: filters.value.customTagId ? Number(filters.value.customTagId) : null,
+      hasNews: filters.value.hasNews,
+      colorRatings: [...filters.value.colorRatings],
       dateFrom: isoFrom ? `${isoFrom}T00:00` : null,
       dateTo: isoTo ? `${isoTo}T23:59` : null
     }
@@ -336,6 +398,227 @@ async function runQuery() {
   }
 }
 
+watch(showCharts, (val) => {
+  if (val && enrichedRows.value.length) {
+    nextTick(() => {
+      updateCharts(enrichedRows.value)
+      updatePnlChart(enrichedRows.value)
+    })
+  }
+})
+
+watch(pnlGroupBy, () => {
+  if (showCharts.value && enrichedRows.value.length) {
+    updatePnlChart(enrichedRows.value)
+  }
+})
+
+watch(enrichedRows, (newVal) => {
+  if (showCharts.value && newVal?.length) {
+    nextTick(() => {
+      updateCharts(newVal)
+      updatePnlChart(newVal)
+    })
+  }
+})
+
+function updateCharts(rows) {
+  if (!equityChartCanvas.value || !drawdownChartCanvas.value) return
+
+  const startBal = initialBalance.value || 0
+  const labels = ['Start', ...rows.map((r) => r.no.toString())]
+  const equityPoints = [startBal, ...rows.map((r) => r.balance)]
+  const drawdownPoints = [0, ...rows.map((r) => r.drawdown)]
+
+  // Trend line: start balance to final balance
+  const trendLine = equityPoints.map((_, i) => {
+    const start = equityPoints[0]
+    const end = equityPoints[equityPoints.length - 1]
+    return start + (i / (equityPoints.length - 1)) * (end - start)
+  })
+
+  // 1. Equity Curve
+  if (equityChart) equityChart.destroy()
+  const ctxE = equityChartCanvas.value.getContext('2d')
+  const gradE = ctxE.createLinearGradient(0, 0, 0, 300)
+  gradE.addColorStop(0, 'rgba(16, 185, 129, 0.25)')
+  gradE.addColorStop(1, 'rgba(16, 185, 129, 0)')
+
+  equityChart = new Chart(ctxE, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Equity',
+          data: equityPoints,
+          borderColor: '#10b981',
+          borderWidth: 2.5,
+          tension: 0.35,
+          fill: true,
+          backgroundColor: gradE,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          z: 10
+        },
+        {
+          label: 'Trend',
+          data: trendLine,
+          borderColor: 'rgba(255, 255, 255, 0.2)',
+          borderWidth: 1.5,
+          borderDash: [5, 5],
+          tension: 0,
+          fill: false,
+          pointRadius: 0,
+          z: 5
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#555', font: { size: 10 } } },
+        y: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#555', font: { size: 10 } } }
+      }
+    }
+  })
+
+  // 2. Drawdown Chart
+  if (drawdownChart) drawdownChart.destroy()
+  const ctxD = drawdownChartCanvas.value.getContext('2d')
+  const gradD = ctxD.createLinearGradient(0, 0, 0, 150)
+  gradD.addColorStop(0, 'rgba(239, 68, 68, 0.25)')
+  gradD.addColorStop(1, 'rgba(239, 68, 68, 0)')
+
+  drawdownChart = new Chart(ctxD, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Drawdown (%)',
+          data: drawdownPoints,
+          borderColor: '#ef4444',
+          borderWidth: 2,
+          tension: 0.35,
+          fill: true,
+          backgroundColor: gradD,
+          pointRadius: 0
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.03)' },
+          ticks: {
+            color: '#666',
+            font: { size: 10 },
+            callback: (v) => v.toFixed(1) + '%'
+          }
+        }
+      }
+    }
+  })
+}
+
+function updatePnlChart(rows) {
+  if (!pnlChartCanvas.value) return
+
+  const groups = {}
+  const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+
+  rows.forEach((r) => {
+    let key = ''
+    if (pnlGroupBy.value === 'day') {
+      key = dayNames[new Date(r.entryDateTime).getDay()]
+    } else if (pnlGroupBy.value === 'symbol') {
+      key = r.symbol || 'Unknown'
+    } else if (pnlGroupBy.value === 'session') {
+      key = r.session || 'N/A'
+    } else if (pnlGroupBy.value === 'rrType') {
+      key = r.rrType || 'N/A'
+    } else if (pnlGroupBy.value === 'rating') {
+      key = r.colorRating ? r.colorRating.toUpperCase() : 'NONE'
+    } else if (pnlGroupBy.value === 'news') {
+      key = r.hasNews ? 'NEWS' : 'NO NEWS'
+    }
+
+    if (!groups[key]) groups[key] = { profit: 0, loss: 0 }
+    if (r.dollarPnl > 0) groups[key].profit += r.dollarPnl
+    else groups[key].loss += Math.abs(r.dollarPnl)
+  })
+
+  // Sort keys (especially for days)
+  let sortedKeys = Object.keys(groups)
+  if (pnlGroupBy.value === 'day') {
+    sortedKeys = ['MON', 'TUE', 'WED', 'THU', 'FRI'].filter((d) => groups[d] || d)
+  }
+
+  const profits = sortedKeys.map((k) => groups[k]?.profit || 0)
+  const losses = sortedKeys.map((k) => -(groups[k]?.loss || 0))
+
+  if (pnlChart) pnlChart.destroy()
+  const ctx = pnlChartCanvas.value.getContext('2d')
+
+  pnlChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sortedKeys,
+      datasets: [
+        {
+          label: 'Gross Profit',
+          data: profits,
+          backgroundColor: '#10b981',
+          borderRadius: 6,
+          borderSkipped: false
+        },
+        {
+          label: 'Gross Loss',
+          data: losses,
+          backgroundColor: '#ef4444',
+          borderRadius: 6,
+          borderSkipped: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: $${Math.abs(ctx.raw).toLocaleString()}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          ticks: { color: '#999', font: { weight: '600', size: 10 } }
+        },
+        y: {
+          stacked: true,
+          grid: { color: 'rgba(255,255,255,0.03)' },
+          ticks: {
+            color: '#666',
+            font: { size: 10 },
+            callback: (v) => '$' + Math.abs(v).toLocaleString()
+          }
+        }
+      }
+    }
+  })
+}
+
 function clearFilters() {
   filters.value = {
     sessions: [],
@@ -343,6 +626,9 @@ function clearFilters() {
     symbols: [],
     setupId: '',
     strategyId: '',
+    customTagId: '',
+    hasNews: null,
+    colorRatings: [],
     dateFrom: '',
     dateTo: ''
   }
@@ -391,55 +677,62 @@ const sortedEditCustomTags = computed(() =>
 // ── Edit Modal ────────────────────────────────────────────────────────────────
 async function openEdit(row) {
   editError.value = ''
-  editRow.value   = row
-  const entryIso  = row.entryDateTime ? row.entryDateTime.slice(0, 10) : ''
-  const exitIso   = row.exitDateTime  ? row.exitDateTime.slice(0, 10)  : ''
-  editForm.value  = {
-    entryDate:     isoToThaiDisplayDate(entryIso),
-    entryTime:     row.entryDateTime ? row.entryDateTime.slice(11, 16) : '',
-    exitDate:      isoToThaiDisplayDate(exitIso),
-    exitTime:      row.exitDateTime  ? row.exitDateTime.slice(11, 16)  : '',
-    symbol:        row.symbol        ?? '',
-    session:       row.session       ?? '',
-    position:      row.position      ?? 'Buy',
+  editRow.value = row
+  const entryIso = row.entryDateTime ? row.entryDateTime.slice(0, 10) : ''
+  const exitIso = row.exitDateTime ? row.exitDateTime.slice(0, 10) : ''
+  editForm.value = {
+    entryDate: isoToThaiDisplayDate(entryIso),
+    entryTime: row.entryDateTime ? row.entryDateTime.slice(11, 16) : '',
+    exitDate: isoToThaiDisplayDate(exitIso),
+    exitTime: row.exitDateTime ? row.exitDateTime.slice(11, 16) : '',
+    symbol: row.symbol ?? '',
+    session: row.session ?? '',
+    position: row.position ?? 'Buy',
     directionBias: row.directionBias ?? 'Bullish',
-    setupId:       String(row.setupId ?? ''),
-    tf:            row.tf            ?? 'M1',
-    rrType:        row.rrType        ?? 'RR 1:2',
-    slPoint:       row.slPoint  != null ? String(row.slPoint)  : '',
-    tpPoint:       row.tpPoint  != null ? String(row.tpPoint)  : '',
-    result:        row.result        ?? 'Win',
-    notes:         row.notes         ?? '',
+    setupId: String(row.setupId ?? ''),
+    tf: row.tf ?? 'M1',
+    rrType: row.rrType ?? 'RR 1:2',
+    slPoint: row.slPoint != null ? String(row.slPoint) : '',
+    tpPoint: row.tpPoint != null ? String(row.tpPoint) : '',
+    result: row.result ?? 'Win',
+    notes: row.notes ?? '',
+    hasNews: row.hasNews ? true : false,
+    colorRating: row.colorRating ?? ''
   }
-  editImageUrlInputs.value       = row.imageUrls?.length ? [...row.imageUrls] : ['']
-  editSelectedStrategyIds.value  = []
+  editImageUrlInputs.value = row.imageUrls?.length ? [...row.imageUrls] : ['']
+  editSelectedStrategyIds.value = []
   editSelectedCustomTagIds.value = []
-  editStrategies.value    = []
+  editStrategies.value = []
   editAllCustomTags.value = []
 
   const [strats, tags] = await Promise.all([
     row.setupId ? window.api.getStrategiesForSetup(Number(row.setupId)) : Promise.resolve([]),
-    window.api.getAllCustomTags()
+    row.setupId ? window.api.getCustomTagsForSetup(Number(row.setupId)) : Promise.resolve([])
   ])
-  editStrategies.value    = strats
+  editStrategies.value = strats
   editAllCustomTags.value = tags
 
   if (strats.length && row.strategyNames) {
-    const names = row.strategyNames.split(',').map(n => n.trim())
-    editSelectedStrategyIds.value = strats.filter(s => names.includes(s.name)).map(s => s.id)
+    const names = row.strategyNames.split(',').map((n) => n.trim())
+    editSelectedStrategyIds.value = strats.filter((s) => names.includes(s.name)).map((s) => s.id)
   }
   if (tags.length && row.customTagNames) {
-    const names = row.customTagNames.split(',').map(n => n.trim())
-    editSelectedCustomTagIds.value = tags.filter(t => names.includes(t.name)).map(t => t.id)
+    const names = row.customTagNames.split(',').map((n) => n.trim())
+    editSelectedCustomTagIds.value = tags.filter((t) => names.includes(t.name)).map((t) => t.id)
   }
   showEditModal.value = true
 }
 
 async function onEditSetupChange() {
   editSelectedStrategyIds.value = []
+  editSelectedCustomTagIds.value = []
   editStrategies.value = []
+  editAllCustomTags.value = []
   if (editForm.value.setupId) {
-    editStrategies.value = await window.api.getStrategiesForSetup(Number(editForm.value.setupId))
+    ;[editStrategies.value, editAllCustomTags.value] = await Promise.all([
+      window.api.getStrategiesForSetup(Number(editForm.value.setupId)),
+      window.api.getCustomTagsForSetup(Number(editForm.value.setupId))
+    ])
   }
 }
 
@@ -453,9 +746,14 @@ function toggleEditCustomTag(id) {
   if (idx === -1) editSelectedCustomTagIds.value.push(id)
   else editSelectedCustomTagIds.value.splice(idx, 1)
 }
-function addEditImageUrl() { editImageUrlInputs.value.push('') }
+function addEditImageUrl() {
+  editImageUrlInputs.value.push('')
+}
 function removeEditImageUrl(i) {
-  if (editImageUrlInputs.value.length === 1) { editImageUrlInputs.value[0] = ''; return }
+  if (editImageUrlInputs.value.length === 1) {
+    editImageUrlInputs.value[0] = ''
+    return
+  }
   editImageUrlInputs.value.splice(i, 1)
 }
 function onEditDateInput(field, e) {
@@ -483,32 +781,36 @@ function buildEditIso(date, time) {
 async function saveEdit() {
   editError.value = ''
   if (!editForm.value.entryDate || !editForm.value.entryTime) {
-    editError.value = 'กรุณากรอกวันและเวลา Entry'; return
+    editError.value = 'กรุณากรอกวันและเวลา Entry'
+    return
   }
   if (!parseThaiDisplayDateToIso(editForm.value.entryDate)) {
-    editError.value = 'รูปแบบวันที่ Entry ต้องเป็น dd/mm/yyyy (ค.ศ.)'; return
+    editError.value = 'รูปแบบวันที่ Entry ต้องเป็น dd/mm/yyyy (ค.ศ.)'
+    return
   }
   editLoading.value = true
   try {
-    const imageUrls = editImageUrlInputs.value.map(u => u.trim()).filter(Boolean)
+    const imageUrls = editImageUrlInputs.value.map((u) => u.trim()).filter(Boolean)
     await window.api.updateJournal({
-      id:            editRow.value.id,
+      id: editRow.value.id,
       entryDateTime: buildEditIso(editForm.value.entryDate, editForm.value.entryTime),
-      exitDateTime:  buildEditIso(editForm.value.exitDate,  editForm.value.exitTime),
-      symbol:        editForm.value.symbol,
-      session:       editForm.value.session || 'New York',
-      position:      editForm.value.position,
+      exitDateTime: buildEditIso(editForm.value.exitDate, editForm.value.exitTime),
+      symbol: editForm.value.symbol,
+      session: editForm.value.session || 'New York',
+      position: editForm.value.position,
       directionBias: editForm.value.directionBias,
-      tf:            editForm.value.tf,
-      rrType:        editForm.value.rrType,
-      slPoint:       editForm.value.slPoint !== '' ? parseFloat(editForm.value.slPoint) : null,
-      tpPoint:       editForm.value.tpPoint !== '' ? parseFloat(editForm.value.tpPoint) : null,
-      result:        editForm.value.result,
-      notes:         editForm.value.notes || null,
-      setupId:       Number(editForm.value.setupId),
-      strategyIds:   [...editSelectedStrategyIds.value],
-      customTagIds:  [...editSelectedCustomTagIds.value],
-      imageUrls,
+      tf: editForm.value.tf,
+      rrType: editForm.value.rrType,
+      slPoint: editForm.value.slPoint !== '' ? parseFloat(editForm.value.slPoint) : null,
+      tpPoint: editForm.value.tpPoint !== '' ? parseFloat(editForm.value.tpPoint) : null,
+      result: editForm.value.result,
+      notes: editForm.value.notes || null,
+      setupId: Number(editForm.value.setupId),
+      hasNews: editForm.value.hasNews ? 1 : 0,
+      colorRating: editForm.value.colorRating || null,
+      strategyIds: [...editSelectedStrategyIds.value],
+      customTagIds: [...editSelectedCustomTagIds.value],
+      imageUrls
     })
     showEditModal.value = false
     await runQuery()
@@ -518,20 +820,77 @@ async function saveEdit() {
     editLoading.value = false
   }
 }
-function closeEdit() { showEditModal.value = false }
+function closeEdit() {
+  showEditModal.value = false
+}
 
 // ── Image Gallery ─────────────────────────────────────────────────────────────
+const galleryDataUrls = ref({})   // cache: originalUrl → base64 data URL or 'error'
+const galleryLoadStates = ref({}) // 'loading' | 'ok' | 'error'
+const isFullView = ref(false)
+
+function getTradingViewImageUrl(url) {
+  const m = url?.match(/tradingview\.com\/x\/([A-Za-z0-9]+)\/?/)
+  if (!m) return null
+  const id = m[1]
+  return `https://s3.tradingview.com/snapshots/${id[0].toLowerCase()}/${id}.png`
+}
+
+function rawImageUrl(url) {
+  return getTradingViewImageUrl(url) ?? (isDirectImage(url) ? url : null)
+}
+
+function isDirectImage(url) {
+  return /\.(png|jpe?g|gif|webp|svg|bmp|tiff?)(\?.*)?$/i.test(url)
+}
+
+function resolvedImageUrl(url) {
+  return getTradingViewImageUrl(url) ?? (isDirectImage(url) ? url : null)
+}
+
+async function fetchGalleryImage(url) {
+  if (galleryLoadStates.value[url]) return // already loading or loaded
+  const fetchUrl = rawImageUrl(url)
+  if (!fetchUrl) {
+    galleryLoadStates.value[url] = 'no-image'
+    return
+  }
+  galleryLoadStates.value[url] = 'loading'
+  try {
+    const res = await window.api.fetchImageAsBase64(fetchUrl)
+    if (res.ok) {
+      galleryDataUrls.value[url] = res.dataUrl
+      galleryLoadStates.value[url] = 'ok'
+    } else {
+      galleryLoadStates.value[url] = 'error'
+    }
+  } catch {
+    galleryLoadStates.value[url] = 'error'
+  }
+}
+
 function openGallery(imageUrls) {
   if (!imageUrls?.length) return
   galleryImages.value = imageUrls
-  galleryIndex.value  = 0
-  showGallery.value   = true
+  galleryIndex.value = 0
+  isFullView.value = false
+  showGallery.value = true
+  // Pre-fetch all images
+  for (const url of imageUrls) fetchGalleryImage(url)
 }
-function closeGallery() { showGallery.value = false }
-function galleryPrev()  { galleryIndex.value = (galleryIndex.value - 1 + galleryImages.value.length) % galleryImages.value.length }
-function galleryNext()  { galleryIndex.value = (galleryIndex.value + 1) % galleryImages.value.length }
-function isDirectImage(url) {
-  return /\.(png|jpe?g|gif|webp|svg|bmp|tiff?)(\?.*)?$/i.test(url)
+function closeGallery() {
+  showGallery.value = false
+  isFullView.value = false
+}
+function toggleFullView() {
+  isFullView.value = !isFullView.value
+}
+function galleryPrev() {
+  galleryIndex.value =
+    (galleryIndex.value - 1 + galleryImages.value.length) % galleryImages.value.length
+}
+function galleryNext() {
+  galleryIndex.value = (galleryIndex.value + 1) % galleryImages.value.length
 }
 function openInBrowser(url) {
   window.api.openExternal(url)
@@ -586,9 +945,34 @@ function openInBrowser(url) {
       <div class="filter-group">
         <div class="filter-label">RR Type</div>
         <div class="checkbox-row">
-          <label v-for="r in ALL_RR_TYPES" :key="r" class="check-label">
+          <label v-for="r in rrTypeOptions" :key="r" class="check-label">
             <input v-model="filters.rrTypes" type="checkbox" :value="r" />{{ r }}
           </label>
+          <span v-if="!rrTypeOptions.length" class="empty-hint">No RR Types defined</span>
+        </div>
+      </div>
+
+      <div class="filter-row-top">
+        <div class="filter-group">
+          <div class="filter-label">News</div>
+          <select v-model="filters.hasNews" class="sm-select">
+            <option :value="null">All</option>
+            <option :value="1">With News (✓)</option>
+            <option :value="0">No News (—)</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <div class="filter-label">Rating</div>
+          <div class="color-filter-row">
+            <button
+              v-for="c in COLOR_OPTIONS"
+              :key="c"
+              class="color-filter-chip"
+              :class="[`color-filter-chip--${c}`, { active: filters.colorRatings.includes(c) }]"
+              @click="toggleColorFilter(c)"
+            ></button>
+          </div>
         </div>
       </div>
 
@@ -630,6 +1014,13 @@ function openInBrowser(url) {
           <select v-model="filters.strategyId" :disabled="!filters.setupId">
             <option value="">All Strategies</option>
             <option v-for="s in strategies" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+        </div>
+        <div class="filter-group sm">
+          <div class="filter-label">{{ customColumnName }}</div>
+          <select v-model="filters.customTagId" :disabled="!filters.setupId">
+            <option value="">All {{ customColumnName }}s</option>
+            <option v-for="t in filterCustomTags" :key="t.id" :value="t.id">{{ t.name }}</option>
           </select>
         </div>
         <div class="filter-group sm">
@@ -693,6 +1084,9 @@ function openInBrowser(url) {
           {{ isLoading ? 'Loading…' : 'Apply Filters' }}
         </button>
         <button class="btn-secondary" @click="clearFilters">Clear</button>
+        <button class="btn-charts-toggle" @click="showCharts = !showCharts">
+          {{ showCharts ? '👁 Hide Charts' : '📊 Show Charts' }}
+        </button>
         <span class="result-count"
           >{{ results.length }} record{{ results.length !== 1 ? 's' : '' }}</span
         >
@@ -763,6 +1157,47 @@ function openInBrowser(url) {
       </div>
     </div>
 
+    <!-- Performance Charts -->
+    <div v-show="showCharts && results.length" class="charts-container">
+      <div class="chart-box">
+        <div class="chart-header">
+          <span class="chart-icon">📈 Equity Curve</span>
+        </div>
+        <div class="chart-body">
+          <canvas ref="equityChartCanvas"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-box">
+        <div class="chart-header">
+          <span class="chart-icon">📉 Drawdown (%)</span>
+        </div>
+        <div class="chart-body">
+          <canvas ref="drawdownChartCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- NPL Breakdown -->
+      <div class="chart-box">
+        <div class="chart-header">
+          <div class="chart-header-title">
+            <span class="chart-icon">📊 Net PnL Breakdown</span>
+          </div>
+          <select v-model="pnlGroupBy" class="chart-group-select">
+            <option value="day">By Day (Mon-Fri)</option>
+            <option value="symbol">By Symbol</option>
+            <option value="session">By Session</option>
+            <option value="rrType">By RR Type</option>
+            <option value="rating">By Rating</option>
+            <option value="news">By News</option>
+          </select>
+        </div>
+        <div class="chart-body">
+          <canvas ref="pnlChartCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Results Table ─────────────────────────────────────────────────── -->
     <div class="table-wrapper">
       <table v-if="enrichedRows.length">
@@ -791,6 +1226,8 @@ function openInBrowser(url) {
             <th>Setup</th>
             <th>Strategy</th>
             <th>{{ customColumnName }}</th>
+            <th>News</th>
+            <th>Rating</th>
             <th></th>
           </tr>
         </thead>
@@ -835,10 +1272,25 @@ function openInBrowser(url) {
             <td>{{ row.setupName || '—' }}</td>
             <td>{{ row.strategyNames || '—' }}</td>
             <td>{{ row.customTagNames || '—' }}</td>
+            <td class="news-cell">{{ row.hasNews ? '✓' : '—' }}</td>
+            <td>
+              <span
+                v-if="row.colorRating"
+                :class="`rating-dot rating-dot--${row.colorRating}`"
+              ></span>
+              <span v-else>—</span>
+            </td>
             <td class="action-cell">
-              <button v-if="row.imageUrls?.length" class="btn-img" @click="openGallery(row.imageUrls)" title="ดูรูปภาพ">🖼</button>
-              <button class="btn-edit" @click="openEdit(row)" title="แก้ไข">✏</button>
-              <button class="btn-delete" @click="deleteRow(row.id)" title="ลบ">✕</button>
+              <button
+                v-if="row.imageUrls?.length"
+                class="btn-img"
+                title="ดูรูปภาพ"
+                @click="openGallery(row.imageUrls)"
+              >
+                🖼
+              </button>
+              <button class="btn-edit" title="แก้ไข" @click="openEdit(row)">✏</button>
+              <button class="btn-delete" title="ลบ" @click="deleteRow(row.id)">✕</button>
             </td>
           </tr>
         </tbody>
@@ -862,28 +1314,74 @@ function openInBrowser(url) {
               <label>Entry Date &amp; Time *</label>
               <div class="dt-inputs">
                 <div class="date-input-wrap">
-                  <input :value="editForm.entryDate" type="text" placeholder="dd/mm/yyyy" maxlength="10"
-                    @input="onEditDateInput('entryDate', $event)" />
-                  <button type="button" class="date-picker-btn" @click="pickEditDate('entryDate', nativeEditEntryRef)">📅</button>
-                  <input ref="nativeEditEntryRef" class="native-date-picker" type="date" tabindex="-1" aria-hidden="true"
-                    @change="onNativeEditDateChange('entryDate', $event.target.value)" />
+                  <input
+                    :value="editForm.entryDate"
+                    type="text"
+                    placeholder="dd/mm/yyyy"
+                    maxlength="10"
+                    @input="onEditDateInput('entryDate', $event)"
+                  />
+                  <button
+                    type="button"
+                    class="date-picker-btn"
+                    @click="pickEditDate('entryDate', nativeEditEntryRef)"
+                  >
+                    📅
+                  </button>
+                  <input
+                    ref="nativeEditEntryRef"
+                    class="native-date-picker"
+                    type="date"
+                    tabindex="-1"
+                    aria-hidden="true"
+                    @change="onNativeEditDateChange('entryDate', $event.target.value)"
+                  />
                 </div>
-                <input :value="editForm.entryTime" type="text" placeholder="HH:MM" maxlength="5"
-                  class="time-input" @input="onTimeInputEdit('entryTime', $event)" />
+                <input
+                  :value="editForm.entryTime"
+                  type="text"
+                  placeholder="HH:MM"
+                  maxlength="5"
+                  class="time-input"
+                  @input="onTimeInputEdit('entryTime', $event)"
+                />
               </div>
             </div>
             <div class="edit-group">
               <label>Exit Date &amp; Time</label>
               <div class="dt-inputs">
                 <div class="date-input-wrap">
-                  <input :value="editForm.exitDate" type="text" placeholder="dd/mm/yyyy" maxlength="10"
-                    @input="onEditDateInput('exitDate', $event)" />
-                  <button type="button" class="date-picker-btn" @click="pickEditDate('exitDate', nativeEditExitRef)">📅</button>
-                  <input ref="nativeEditExitRef" class="native-date-picker" type="date" tabindex="-1" aria-hidden="true"
-                    @change="onNativeEditDateChange('exitDate', $event.target.value)" />
+                  <input
+                    :value="editForm.exitDate"
+                    type="text"
+                    placeholder="dd/mm/yyyy"
+                    maxlength="10"
+                    @input="onEditDateInput('exitDate', $event)"
+                  />
+                  <button
+                    type="button"
+                    class="date-picker-btn"
+                    @click="pickEditDate('exitDate', nativeEditExitRef)"
+                  >
+                    📅
+                  </button>
+                  <input
+                    ref="nativeEditExitRef"
+                    class="native-date-picker"
+                    type="date"
+                    tabindex="-1"
+                    aria-hidden="true"
+                    @change="onNativeEditDateChange('exitDate', $event.target.value)"
+                  />
                 </div>
-                <input :value="editForm.exitTime" type="text" placeholder="HH:MM" maxlength="5"
-                  class="time-input" @input="onTimeInputEdit('exitTime', $event)" />
+                <input
+                  :value="editForm.exitTime"
+                  type="text"
+                  placeholder="HH:MM"
+                  maxlength="5"
+                  class="time-input"
+                  @input="onTimeInputEdit('exitTime', $event)"
+                />
               </div>
             </div>
           </div>
@@ -937,10 +1435,16 @@ function openInBrowser(url) {
           <div class="edit-group edit-group--full">
             <label>Strategy <span class="edit-auto-tag">(multi-select)</span></label>
             <div class="edit-chips">
-              <button v-for="s in sortedEditStrategies" :key="s.id" type="button"
+              <button
+                v-for="s in sortedEditStrategies"
+                :key="s.id"
+                type="button"
                 class="edit-chip chip--blue"
                 :class="{ active: editSelectedStrategyIds.includes(s.id) }"
-                @click="toggleEditStrategy(s.id)">{{ s.name }}</button>
+                @click="toggleEditStrategy(s.id)"
+              >
+                {{ s.name }}
+              </button>
               <span v-if="!editForm.setupId" class="chip-empty">Select a setup first</span>
               <span v-else-if="!editStrategies.length" class="chip-empty">No strategies</span>
             </div>
@@ -970,15 +1474,55 @@ function openInBrowser(url) {
             </div>
           </div>
 
+          <!-- News + Color Rating -->
+          <div class="edit-row">
+            <div class="edit-group">
+              <label>News</label>
+              <label class="edit-checkbox-field">
+                <input v-model="editForm.hasNews" type="checkbox" />
+                <span>{{ editForm.hasNews ? 'มีข่าว' : 'ไม่มีข่าว' }}</span>
+              </label>
+            </div>
+            <div class="edit-group edit-group--wide">
+              <label>ระดับสี (Quality)</label>
+              <div class="edit-color-picker">
+                <button
+                  v-for="c in [
+                    ['red', 'แดง'],
+                    ['orange', 'ส้ม'],
+                    ['yellow', 'เหลือง'],
+                    ['green', 'เขียว']
+                  ]"
+                  :key="c[0]"
+                  type="button"
+                  class="edit-color-chip"
+                  :class="[`color-chip--${c[0]}`, { active: editForm.colorRating === c[0] }]"
+                  @click="editForm.colorRating = editForm.colorRating === c[0] ? '' : c[0]"
+                >
+                  {{ c[1] }}
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- Custom Tags -->
           <div class="edit-group edit-group--full">
             <label>{{ customColumnName }} <span class="edit-auto-tag">(multi-select)</span></label>
             <div class="edit-chips">
-              <button v-for="t in sortedEditCustomTags" :key="t.id" type="button"
+              <button
+                v-for="t in sortedEditCustomTags"
+                :key="t.id"
+                type="button"
                 class="edit-chip"
                 :class="{ active: editSelectedCustomTagIds.includes(t.id) }"
-                @click="toggleEditCustomTag(t.id)">{{ t.name }}</button>
-              <span v-if="!editAllCustomTags.length" class="chip-empty">No tags</span>
+                @click="toggleEditCustomTag(t.id)"
+              >
+                {{ t.name }}
+              </button>
+              <span v-if="!editForm.setupId" class="chip-empty">Select a setup first</span>
+              <span v-else-if="!editAllCustomTags.length" class="chip-empty"
+                >No tags linked to this setup</span
+              >
             </div>
           </div>
 
@@ -987,17 +1531,29 @@ function openInBrowser(url) {
             <label>Image URL(s)</label>
             <div class="edit-image-list">
               <div v-for="(_, idx) in editImageUrlInputs" :key="idx" class="edit-image-row">
-                <input v-model.trim="editImageUrlInputs[idx]" type="url" placeholder="https://example.com/image.png" />
-                <button type="button" class="btn-url-remove" @click="removeEditImageUrl(idx)">Remove</button>
+                <input
+                  v-model.trim="editImageUrlInputs[idx]"
+                  type="url"
+                  placeholder="https://example.com/image.png"
+                />
+                <button type="button" class="btn-url-remove" @click="removeEditImageUrl(idx)">
+                  Remove
+                </button>
               </div>
-              <button type="button" class="btn-url-add" @click="addEditImageUrl">+ Add Image URL</button>
+              <button type="button" class="btn-url-add" @click="addEditImageUrl">
+                + Add Image URL
+              </button>
             </div>
           </div>
 
           <!-- Notes -->
           <div class="edit-group edit-group--full">
             <label>Notes</label>
-            <textarea v-model="editForm.notes" rows="3" placeholder="Optional trade notes…"></textarea>
+            <textarea
+              v-model="editForm.notes"
+              rows="3"
+              placeholder="Optional trade notes…"
+            ></textarea>
           </div>
 
           <p v-if="editError" class="edit-error">{{ editError }}</p>
@@ -1014,46 +1570,83 @@ function openInBrowser(url) {
 
   <!-- ── Image Gallery Modal ─────────────────────────────────────────────── -->
   <teleport to="body">
-    <div v-if="showGallery" class="modal-backdrop" @click.self="closeGallery">
-      <div class="gallery-panel">
+    <div v-if="showGallery" class="modal-backdrop" :class="{ 'is-full-view-backdrop': isFullView }" @click.self="closeGallery">
+      <div class="gallery-panel" :class="{ 'is-full-view-panel': isFullView }">
         <div class="gallery-header">
-          <span>🖼 รูปภาพ {{ galleryIndex + 1 }} / {{ galleryImages.length }}</span>
+          <div class="gallery-header-info">
+            <span>🖼 รูปภาพ {{ galleryIndex + 1 }} / {{ galleryImages.length }}</span>
+            <button class="btn-fullscreen-toggle" @click="toggleFullView">
+              {{ isFullView ? '🗗 ย่อหน้าต่าง' : '🗖 เต็มจอ' }}
+            </button>
+          </div>
           <button class="modal-close" @click="closeGallery">✕</button>
         </div>
         <div class="gallery-body">
-          <button v-if="galleryImages.length > 1" class="gallery-nav gallery-prev" @click="galleryPrev">&#8249;</button>
+          <button
+            v-if="galleryImages.length > 1"
+            class="gallery-nav gallery-prev"
+            @click="galleryPrev"
+          >
+            &#8249;
+          </button>
 
-          <!-- Direct image file -->
+          <!-- Image Display (using base64 data if available) -->
+          <div v-if="galleryLoadStates[galleryImages[galleryIndex]] === 'loading'" class="gallery-webcard">
+             <div class="webcard-icon spinning">⌛</div>
+             <p>กำลังโหลดรูปภาพ...</p>
+          </div>
+
           <img
-            v-if="isDirectImage(galleryImages[galleryIndex])"
-            :src="galleryImages[galleryIndex]"
+            v-else-if="galleryLoadStates[galleryImages[galleryIndex]] === 'ok'"
+            :src="galleryDataUrls[galleryImages[galleryIndex]]"
             class="gallery-img"
             :alt="`Image ${galleryIndex + 1}`"
           />
 
-          <!-- Web page / chart link -->
-          <div v-else class="gallery-webcard">
-            <div class="webcard-icon">🔗</div>
+          <!-- Fallback or Error webcard -->
+          <div
+            v-else-if="galleryLoadStates[galleryImages[galleryIndex]] === 'error'"
+            class="gallery-webcard"
+          >
+            <div class="webcard-icon">⚠️</div>
             <div class="webcard-url">{{ galleryImages[galleryIndex] }}</div>
-            <p class="webcard-note">URL นี้ไม่ใช่ไฟล์รูปโดยตรง — กดปุ่มด้านล่างเพื่อเปิดในเบราว์เซอร์</p>
+            <p class="webcard-note">โหลดรูปไม่สำเร็จ — กดเปิดในเบราว์เซอร์</p>
             <button class="webcard-btn" @click="openInBrowser(galleryImages[galleryIndex])">
               🌐 เปิดในเบราว์เซอร์
             </button>
           </div>
 
-          <button v-if="galleryImages.length > 1" class="gallery-nav gallery-next" @click="galleryNext">&#8250;</button>
+          <!-- Non-image link -->
+          <div v-else class="gallery-webcard">
+            <div class="webcard-icon">🔗</div>
+            <div class="webcard-url">{{ galleryImages[galleryIndex] }}</div>
+            <p class="webcard-note">
+              URL นี้ไม่ใช่ไฟล์รูปโดยตรง — กดปุ่มด้านล่างเพื่อเปิดในเบราว์เซอร์
+            </p>
+            <button class="webcard-btn" @click="openInBrowser(galleryImages[galleryIndex])">
+              🌐 เปิดในเบราว์เซอร์
+            </button>
+          </div>
+
+          <button
+            v-if="galleryImages.length > 1"
+            class="gallery-nav gallery-next"
+            @click="galleryNext"
+          >
+            &#8250;
+          </button>
         </div>
         <div class="gallery-footer">
           <a
             href="#"
             class="gallery-link"
             @click.prevent="openInBrowser(galleryImages[galleryIndex])"
-          >เปิดในเบราว์เซอร์ ↗</a>
+            >เปิดในเบราว์เซอร์ ↗</a
+          >
         </div>
       </div>
     </div>
   </teleport>
-
 </template>
 
 <style scoped>
@@ -1489,7 +2082,11 @@ tr.row-loss td {
 }
 
 /* ── Action buttons in table ─────────────────────────────────────────────────── */
-.action-cell { display: flex; gap: 5px; align-items: center; }
+.action-cell {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
 .btn-edit {
   background: none;
   border: 1px solid #384f6e;
@@ -1500,7 +2097,10 @@ tr.row-loss td {
   font-size: 0.8rem;
   line-height: 1.4;
 }
-.btn-edit:hover { border-color: #4f9cf9; background: #0f2a4a; }
+.btn-edit:hover {
+  border-color: #4f9cf9;
+  background: #0f2a4a;
+}
 .btn-img {
   background: none;
   border: 1px solid #3d2e5e;
@@ -1511,7 +2111,10 @@ tr.row-loss td {
   font-size: 0.8rem;
   line-height: 1.4;
 }
-.btn-img:hover { border-color: #a78bfa; background: #1e1040; }
+.btn-img:hover {
+  border-color: #a78bfa;
+  background: #1e1040;
+}
 
 /* ── Modal Backdrop & Panel ──────────────────────────────────────────────────── */
 .modal-backdrop {
@@ -1534,7 +2137,7 @@ tr.row-loss td {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
 }
 .modal-header {
   display: flex;
@@ -1559,9 +2162,14 @@ tr.row-loss td {
   padding: 4px 8px;
   border-radius: 6px;
   line-height: 1;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
-.modal-close:hover { color: #f87171; background: #2d0a0a; }
+.modal-close:hover {
+  color: #f87171;
+  background: #2d0a0a;
+}
 .modal-body {
   overflow-y: auto;
   padding: 20px 22px;
@@ -1589,8 +2197,13 @@ tr.row-loss td {
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-save:hover:not(:disabled) { background: #3b82f6; }
-.btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-save:hover:not(:disabled) {
+  background: #3b82f6;
+}
+.btn-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .btn-cancel {
   padding: 8px 20px;
   background: #252525;
@@ -1600,7 +2213,10 @@ tr.row-loss td {
   font-size: 0.9rem;
   cursor: pointer;
 }
-.btn-cancel:hover { background: #333; color: #e0e0e0; }
+.btn-cancel:hover {
+  background: #333;
+  color: #e0e0e0;
+}
 
 /* ── Edit Modal Form ─────────────────────────────────────────────────────────── */
 .edit-modal .edit-row {
@@ -1615,7 +2231,9 @@ tr.row-loss td {
   flex: 1;
   min-width: 140px;
 }
-.edit-group--full { flex: 0 0 100%; }
+.edit-group--full {
+  flex: 0 0 100%;
+}
 .edit-group label {
   font-size: 0.72rem;
   font-weight: 700;
@@ -1623,7 +2241,12 @@ tr.row-loss td {
   letter-spacing: 0.05em;
   color: #666;
 }
-.edit-auto-tag { font-weight: 400; text-transform: none; color: #4f9cf9; margin-left: 4px; }
+.edit-auto-tag {
+  font-weight: 400;
+  text-transform: none;
+  color: #4f9cf9;
+  margin-left: 4px;
+}
 .edit-group input[type='text'],
 .edit-group input[type='number'],
 .edit-group input[type='url'],
@@ -1639,12 +2262,30 @@ tr.row-loss td {
 }
 .edit-group input:focus,
 .edit-group select:focus,
-.edit-group textarea:focus { outline: none; border-color: #4f9cf9; }
-.edit-group textarea { resize: vertical; }
-.edit-modal .dt-inputs { display: flex; gap: 8px; }
-.edit-modal .date-input-wrap { flex: 3; position: relative; min-width: 0; }
-.edit-modal .date-input-wrap > input { width: 100%; padding-right: 38px; }
-.edit-modal .time-input { flex: 0 0 72px; text-align: center; }
+.edit-group textarea:focus {
+  outline: none;
+  border-color: #4f9cf9;
+}
+.edit-group textarea {
+  resize: vertical;
+}
+.edit-modal .dt-inputs {
+  display: flex;
+  gap: 8px;
+}
+.edit-modal .date-input-wrap {
+  flex: 3;
+  position: relative;
+  min-width: 0;
+}
+.edit-modal .date-input-wrap > input {
+  width: 100%;
+  padding-right: 38px;
+}
+.edit-modal .time-input {
+  flex: 0 0 72px;
+  text-align: center;
+}
 .edit-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1662,13 +2303,37 @@ tr.row-loss td {
   font-size: 0.83rem;
   transition: all 0.15s;
 }
-.edit-chip.active { background: #052e16; border-color: #4ade80; color: #4ade80; }
-.edit-chip.chip--blue.active { background: #0f2a4a; border-color: #4f9cf9; color: #4f9cf9; }
-.edit-chip:hover:not(.active) { border-color: #555; color: #ccc; }
-.chip-empty { font-size: 0.82rem; color: #444; font-style: italic; }
-.edit-image-list { display: flex; flex-direction: column; gap: 8px; }
-.edit-image-row { display: flex; gap: 8px; }
-.edit-image-row input { flex: 1; }
+.edit-chip.active {
+  background: #052e16;
+  border-color: #4ade80;
+  color: #4ade80;
+}
+.edit-chip.chip--blue.active {
+  background: #0f2a4a;
+  border-color: #4f9cf9;
+  color: #4f9cf9;
+}
+.edit-chip:hover:not(.active) {
+  border-color: #555;
+  color: #ccc;
+}
+.chip-empty {
+  font-size: 0.82rem;
+  color: #444;
+  font-style: italic;
+}
+.edit-image-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.edit-image-row {
+  display: flex;
+  gap: 8px;
+}
+.edit-image-row input {
+  flex: 1;
+}
 .btn-url-add,
 .btn-url-remove {
   border: 1px solid #333;
@@ -1680,7 +2345,9 @@ tr.row-loss td {
   padding: 5px 11px;
   white-space: nowrap;
 }
-.btn-url-add { align-self: flex-start; }
+.btn-url-add {
+  align-self: flex-start;
+}
 .edit-error {
   color: #f87171;
   font-size: 0.87rem;
@@ -1700,7 +2367,7 @@ tr.row-loss td {
   max-height: 92vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.8);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8);
 }
 .gallery-header {
   display: flex;
@@ -1730,7 +2397,7 @@ tr.row-loss td {
   border: 1px solid #252525;
 }
 .gallery-nav {
-  background: rgba(255,255,255,0.07);
+  background: rgba(255, 255, 255, 0.07);
   border: 1px solid #333;
   border-radius: 50%;
   width: 44px;
@@ -1742,11 +2409,16 @@ tr.row-loss td {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
   padding: 0;
   line-height: 1;
 }
-.gallery-nav:hover { background: rgba(255,255,255,0.14); color: #fff; }
+.gallery-nav:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
 .gallery-footer {
   padding: 10px 20px;
   border-top: 1px solid #1e1e1e;
@@ -1758,7 +2430,45 @@ tr.row-loss td {
   font-size: 0.85rem;
   text-decoration: none;
 }
-.gallery-link:hover { text-decoration: underline; }
+.gallery-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Full Screen Mode ── */
+.is-full-view-backdrop {
+  background: black !important;
+}
+.is-full-view-panel {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+.is-full-view-panel .gallery-img {
+  max-height: 85vh !important;
+}
+.gallery-header-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.btn-fullscreen-toggle {
+  background: #252525;
+  border: 1px solid #333;
+  color: #bbb;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-fullscreen-toggle:hover {
+  background: #333;
+  color: #fff;
+  border-color: #555;
+}
 
 /* ── Gallery Web-Card (non-image URLs) ────────────────────────────────────── */
 .gallery-webcard {
@@ -1805,5 +2515,232 @@ tr.row-loss td {
   cursor: pointer;
   transition: background 0.15s;
 }
-.webcard-btn:hover { background: #3b82f6; }
+.webcard-btn:hover {
+  background: #3b82f6;
+}
+
+/* News + Color Rating */
+.news-cell {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.rating-dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.rating-dot--red {
+  background: #ef4444;
+}
+.rating-dot--orange {
+  background: #f97316;
+}
+.rating-dot--yellow {
+  background: #eab308;
+}
+.rating-dot--green {
+  background: #22c55e;
+}
+
+/* Edit modal — news checkbox */
+.edit-checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1e1e1e;
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: #e0e0e0;
+  user-select: none;
+}
+.edit-checkbox-field input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: #4f9cf9;
+}
+.edit-group--wide {
+  flex: 2;
+  min-width: 200px;
+}
+
+/* Edit modal — color picker */
+.edit-color-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.edit-color-chip {
+  padding: 5px 13px;
+  border-radius: 20px;
+  border: 1px solid #3a3a3a;
+  background: #1e1e1e;
+  color: #999;
+  cursor: pointer;
+  font-size: 0.83rem;
+  transition: all 0.15s;
+}
+.color-chip--red.active {
+  background: #450a0a;
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.color-chip--orange.active {
+  background: #431407;
+  border-color: #f97316;
+  color: #f97316;
+}
+.color-chip--yellow.active {
+  background: #422006;
+  border-color: #eab308;
+  color: #eab308;
+}
+.color-chip--green.active {
+  background: #052e16;
+  border-color: #22c55e;
+  color: #22c55e;
+}
+.edit-color-chip:hover:not(.active) {
+  border-color: #555;
+  color: #ccc;
+}
+.webcard-icon.spinning {
+  display: inline-block;
+  animation: spin 2s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.empty-hint {
+  font-size: 0.8rem;
+  color: #555;
+  font-style: italic;
+}
+
+/* ── Dashboard New Filters ── */
+.filter-row-top {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 8px;
+  align-items: flex-start;
+}
+.sm-select {
+  padding: 6px 12px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  font-size: 0.88rem;
+  min-width: 140px;
+}
+.color-filter-row {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+}
+.color-filter-chip {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #111;
+  padding: 0;
+}
+.color-filter-chip--red { background: #7f1d1d; border-color: #450a0a; }
+.color-filter-chip--orange { background: #7c2d12; border-color: #431407; }
+.color-filter-chip--yellow { background: #713f12; border-color: #422006; }
+.color-filter-chip--green { background: #064e3b; border-color: #052e16; }
+
+.color-filter-chip.active {
+  border-color: #fff;
+  transform: scale(1.1);
+}
+.color-filter-chip--red.active { background: #ef4444; }
+.color-filter-chip--orange.active { background: #f97316; }
+.color-filter-chip--yellow.active { background: #eab308; }
+.color-filter-chip--green.active { background: #22c55e; }
+
+.btn-charts-toggle {
+  background: #1e1e24;
+  border: 1px solid #2d2d35;
+  color: #aaa;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 8px;
+}
+.btn-charts-toggle:hover {
+  background: #2d2d35;
+  color: #fff;
+}
+
+/* ── Performance Charts ── */
+.dashboard-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 10px;
+}
+.charts-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.chart-box {
+  background: #0f0f12;
+  border: 1px solid #1e1e24;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.chart-header {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chart-icon {
+  font-size: 1.1rem;
+}
+.chart-body {
+  height: 320px;
+  position: relative;
+}
+.chart-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chart-header {
+  justify-content: space-between;
+}
+.chart-group-select {
+  background: #1a1a1f;
+  border: 1px solid #333;
+  color: #ccc;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  outline: none;
+  cursor: pointer;
+}
+.chart-group-select:hover {
+  border-color: #555;
+  color: #fff;
+}
+
 </style>

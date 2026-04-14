@@ -115,4 +115,25 @@ export function registerAppHandlers() {
       return { ok: false, imageUrl: null, error: e.message }
     }
   })
+
+  // Fetch an image URL from main process and return it as a base64 data URL
+  // This bypasses Electron CSP that blocks <img src> for external domains.
+  handle('app:fetchImageAsBase64', async (_event, url) => {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'image/webp,image/png,image/*,*/*'
+        },
+        redirect: 'follow'
+      })
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+      const contentType = res.headers.get('content-type') || 'image/png'
+      const arrayBuffer = await res.arrayBuffer()
+      const base64 = Buffer.from(arrayBuffer).toString('base64')
+      return { ok: true, dataUrl: `data:${contentType};base64,${base64}` }
+    } catch (e) {
+      return { ok: false, error: e.message }
+    }
+  })
 }

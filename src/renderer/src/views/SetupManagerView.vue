@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const setups = ref([])
@@ -10,8 +10,40 @@ const newSetup = ref({ name: '', description: '' })
 const newStrategy = ref({ name: '', description: '' })
 const newSymbol = ref('')
 
-// For linking strategies to a setup
-const linkForm = ref({ setupId: '', strategyId: '' })
+// Bulk link: strategies ↔ setup
+const stratLink = ref({ setupId: '', checkedIds: [], linkedIds: [] })
+const stratAllChecked = computed(
+  () =>
+    strategies.value.length > 0 &&
+    strategies.value.every((s) => stratLink.value.checkedIds.includes(s.id))
+)
+const stratSomeChecked = computed(() =>
+  strategies.value.some((s) => stratLink.value.checkedIds.includes(s.id))
+)
+
+// Bulk link: custom tags ↔ setup
+const tagLink = ref({ setupId: '', checkedIds: [], linkedIds: [] })
+const tagAllChecked = computed(
+  () =>
+    customTags.value.length > 0 &&
+    customTags.value.every((t) => tagLink.value.checkedIds.includes(t.id))
+)
+const tagSomeChecked = computed(() =>
+  customTags.value.some((t) => tagLink.value.checkedIds.includes(t.id))
+)
+
+// Bulk link: RR Types ↔ setup
+const rrTypes = ref([])
+const newRRType = ref({ name: '', ratio: '' })
+const rrLink = ref({ setupId: '', checkedIds: [], linkedIds: [] })
+const rrAllChecked = computed(
+  () =>
+    rrTypes.value.length > 0 &&
+    rrTypes.value.every((r) => rrLink.value.checkedIds.includes(r.id))
+)
+const rrSomeChecked = computed(() =>
+  rrTypes.value.some((r) => rrLink.value.checkedIds.includes(r.id))
+)
 
 // For session time-range config
 const sessionForm = ref({ setupId: '', sessionName: 'New York', startTime: '', endTime: '' })
@@ -26,15 +58,37 @@ const customColumnName = ref('Custom Tag')
 const msg = ref('')
 const error = ref('')
 
+// ── In-app confirm modal (replaces native confirm() which breaks focus) ──────
+const confirmModal = ref({ visible: false, message: '', resolve: null })
+
+function useConfirm(message) {
+  return new Promise((resolve) => {
+    confirmModal.value = { visible: true, message, resolve }
+  })
+}
+
+function onConfirmYes() {
+  const resolve = confirmModal.value.resolve
+  confirmModal.value = { visible: false, message: '', resolve: null }
+  resolve(true)
+}
+
+function onConfirmNo() {
+  const resolve = confirmModal.value.resolve
+  confirmModal.value = { visible: false, message: '', resolve: null }
+  resolve(false)
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(loadAll)
 
 async function loadAll() {
-  ;[setups.value, strategies.value, symbols.value, customTags.value] = await Promise.all([
+  ;[setups.value, strategies.value, symbols.value, customTags.value, rrTypes.value] = await Promise.all([
     window.api.getAllSetups(),
     window.api.getAllStrategies(),
     window.api.getAllSymbols(),
-    window.api.getAllCustomTags()
+    window.api.getAllCustomTags(),
+    window.api.getAllRRTypes()
   ])
   const s = await window.api.getAllSettings()
   customColumnName.value = s.customColumnName || 'Custom Tag'
@@ -84,11 +138,31 @@ async function createSymbol() {
 }
 
 // ── Link ──────────────────────────────────────────────────────────────────────
-async function linkStrategy() {
-  if (!linkForm.value.setupId || !linkForm.value.strategyId) return
+async function onStratLinkSetupChange() {
+  stratLink.value.checkedIds = []
+  stratLink.value.linkedIds = []
+  if (!stratLink.value.setupId) return
+  const rows = await window.api.getStrategiesForSetup(Number(stratLink.value.setupId))
+  stratLink.value.checkedIds = rows.map((s) => s.id)
+  stratLink.value.linkedIds = rows.map((s) => s.id)
+}
+
+function toggleAllStrats(on) {
+  stratLink.value.checkedIds = on ? strategies.value.map((s) => s.id) : []
+}
+
+async function saveStrategyLinks() {
+  if (!stratLink.value.setupId) return
   try {
-    await window.api.linkStrategy(Number(linkForm.value.setupId), Number(linkForm.value.strategyId))
-    flashMsg('Strategy linked to setup.')
+    const setupId = Number(stratLink.value.setupId)
+    const checked = [...stratLink.value.checkedIds]
+    const linked = [...stratLink.value.linkedIds]
+    const toLink = checked.filter((id) => !linked.includes(id))
+    const toUnlink = linked.filter((id) => !checked.includes(id))
+    for (const id of toLink) await window.api.linkStrategy(setupId, id)
+    for (const id of toUnlink) await window.api.unlinkStrategy(setupId, id)
+    stratLink.value.linkedIds = checked
+    flashMsg('Strategies saved.')
     await loadAll()
   } catch (e) {
     flashError(e.message)
@@ -137,24 +211,67 @@ async function deleteSetupSession(id) {
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 async function deleteSetup(id) {
-  if (!confirm('Delete this setup? All linked journal entries will be affected.')) return
+  const confirmed = await useConfirm('Delete this setup? All linked journal entries will be affected.')
+  if (!confirmed) return
   await window.api.deleteSetup(id)
   flashMsg('Setup deleted.')
   await loadAll()
 }
 
 async function deleteStrategy(id) {
-  if (!confirm('Delete this strategy?')) return
+  const confirmed = await useConfirm('Delete this strategy?')
+  if (!confirmed) return
   await window.api.deleteStrategy(id)
   flashMsg('Strategy deleted.')
   await loadAll()
 }
 
 async function deleteSymbol(id) {
-  if (!confirm('Delete this symbol?')) return
+  const confirmed = await useConfirm('Delete this symbol?')
+  if (!confirmed) return
   await window.api.deleteSymbol(id)
   flashMsg('Symbol deleted.')
   symbols.value = await window.api.getAllSymbols()
+}
+
+// ── Link Setup ↔ Custom Tag ───────────────────────────────────────────────────
+async function onTagLinkSetupChange() {
+  tagLink.value.checkedIds = []
+  tagLink.value.linkedIds = []
+  if (!tagLink.value.setupId) return
+  const rows = await window.api.getCustomTagsForSetup(Number(tagLink.value.setupId))
+  tagLink.value.checkedIds = rows.map((t) => t.id)
+  tagLink.value.linkedIds = rows.map((t) => t.id)
+}
+
+function toggleAllTags(on) {
+  tagLink.value.checkedIds = on ? customTags.value.map((t) => t.id) : []
+}
+
+async function saveCustomTagLinks() {
+  if (!tagLink.value.setupId) return
+  try {
+    const setupId = Number(tagLink.value.setupId)
+    const checked = [...tagLink.value.checkedIds]
+    const linked = [...tagLink.value.linkedIds]
+    const toLink = checked.filter((id) => !linked.includes(id))
+    const toUnlink = linked.filter((id) => !checked.includes(id))
+    for (const id of toLink) await window.api.linkCustomTag(setupId, id)
+    for (const id of toUnlink) await window.api.unlinkCustomTag(setupId, id)
+    tagLink.value.linkedIds = checked
+    flashMsg('Custom tags saved.')
+    await loadAll()
+  } catch (e) {
+    flashError(e.message)
+  }
+}
+
+async function unlinkCustomTag(setupId, tagName) {
+  const tag = customTags.value.find((t) => t.name === tagName)
+  if (!tag) return
+  await window.api.unlinkCustomTag(setupId, tag.id)
+  flashMsg(`Unlinked "${tagName}" from setup.`)
+  await loadAll()
 }
 
 // ── Custom Tags ───────────────────────────────────────────────────────────────
@@ -178,10 +295,74 @@ async function createCustomTag() {
 }
 
 async function deleteCustomTag(id) {
-  if (!confirm('Delete this tag?')) return
+  const confirmed = await useConfirm('Delete this tag?')
+  if (!confirmed) return
   await window.api.deleteCustomTag(id)
   flashMsg('Tag deleted.')
   customTags.value = await window.api.getAllCustomTags()
+}
+
+// ── RR Types (global CRUD) ─────────────────────────────────────────────────────
+async function createRRType() {
+  const name = newRRType.value.name.trim()
+  const ratio = parseFloat(newRRType.value.ratio)
+  if (!name || isNaN(ratio) || ratio <= 0) return
+  try {
+    await window.api.createRRType({ name, ratio })
+    newRRType.value = { name: '', ratio: '' }
+    flashMsg('RR Type added.')
+    rrTypes.value = await window.api.getAllRRTypes()
+  } catch (e) {
+    flashError(e.message)
+  }
+}
+
+async function deleteRRType(id) {
+  const confirmed = await useConfirm('Delete this RR Type?')
+  if (!confirmed) return
+  await window.api.deleteRRType(id)
+  flashMsg('RR Type deleted.')
+  rrTypes.value = await window.api.getAllRRTypes()
+}
+
+// ── RR Types (link / unlink per setup) ─────────────────────────────────────
+async function onRRLinkSetupChange() {
+  rrLink.value.checkedIds = []
+  rrLink.value.linkedIds = []
+  if (!rrLink.value.setupId) return
+  const rows = await window.api.getRRTypesForSetup(Number(rrLink.value.setupId))
+  rrLink.value.checkedIds = rows.map((r) => r.id)
+  rrLink.value.linkedIds = rows.map((r) => r.id)
+}
+
+function toggleAllRR(on) {
+  rrLink.value.checkedIds = on ? rrTypes.value.map((r) => r.id) : []
+}
+
+async function saveRRTypeLinks() {
+  if (!rrLink.value.setupId) return
+  try {
+    const setupId = Number(rrLink.value.setupId)
+    const checked = [...rrLink.value.checkedIds]
+    const linked = [...rrLink.value.linkedIds]
+    const toLink = checked.filter((id) => !linked.includes(id))
+    const toUnlink = linked.filter((id) => !checked.includes(id))
+    for (const id of toLink) await window.api.linkRRType(setupId, id)
+    for (const id of toUnlink) await window.api.unlinkRRType(setupId, id)
+    rrLink.value.linkedIds = checked
+    flashMsg('RR Types saved.')
+    await loadAll()
+  } catch (e) {
+    flashError(e.message)
+  }
+}
+
+async function unlinkRRType(setupId, rrName) {
+  const rr = rrTypes.value.find((r) => r.name === rrName)
+  if (!rr) return
+  await window.api.unlinkRRType(setupId, rr.id)
+  flashMsg(`Unlinked "${rrName}" from setup.`)
+  await loadAll()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -204,6 +385,19 @@ function flashError(e) {
     <transition name="toast">
       <div v-if="msg || error" class="toast" :class="error ? 'toast-error' : 'toast-success'">
         {{ msg || error }}
+      </div>
+    </transition>
+
+    <!-- ── Confirm Modal ── -->
+    <transition name="modal-fade">
+      <div v-if="confirmModal.visible" class="modal-overlay" @click.self="onConfirmNo">
+        <div class="modal-box">
+          <p class="modal-msg">{{ confirmModal.message }}</p>
+          <div class="modal-actions">
+            <button class="modal-btn modal-btn--cancel" @click="onConfirmNo">Cancel</button>
+            <button class="modal-btn modal-btn--confirm" @click="onConfirmYes">Delete</button>
+          </div>
+        </div>
       </div>
     </transition>
 
@@ -266,17 +460,29 @@ function flashError(e) {
       <section class="card">
         <h3>Link Setup → Strategy</h3>
         <p class="hint">Controls which strategies appear in the Journal Entry dropdown.</p>
-        <form class="mini-form" @submit.prevent="linkStrategy">
-          <select v-model="linkForm.setupId" required>
+        <div class="mini-form">
+          <select v-model="stratLink.setupId" @change="onStratLinkSetupChange">
             <option value="" disabled>Select Setup…</option>
             <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
-          <select v-model="linkForm.strategyId" required>
-            <option value="" disabled>Select Strategy…</option>
-            <option v-for="s in strategies" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
-          <button type="submit">Link</button>
-        </form>
+        </div>
+        <div v-if="stratLink.setupId && strategies.length" class="check-list">
+          <label class="check-item check-all">
+            <input
+              type="checkbox"
+              :checked="stratAllChecked"
+              :indeterminate="stratSomeChecked && !stratAllChecked"
+              @change="toggleAllStrats($event.target.checked)"
+            />
+            <span>All</span>
+          </label>
+          <label v-for="s in strategies" :key="s.id" class="check-item">
+            <input type="checkbox" v-model="stratLink.checkedIds" :value="s.id" />
+            <span>{{ s.name }}</span>
+          </label>
+          <button class="btn-save" @click="saveStrategyLinks">Save</button>
+        </div>
+        <p v-else-if="stratLink.setupId" class="empty">No strategies available.</p>
         <div v-for="setup in setups" :key="setup.id" class="link-group">
           <div class="link-title">{{ setup.name }}</div>
           <div v-if="setup.linkedStrategies" class="link-chips">
@@ -290,6 +496,49 @@ function flashError(e) {
             </span>
           </div>
           <span v-else class="sub">No strategies linked</span>
+        </div>
+      </section>
+
+      <!-- ── Link Setup ↔ Custom Tag ──────────────────────────────────── -->
+      <section class="card">
+        <h3>Link Setup → Custom Tag</h3>
+        <p class="hint">Controls which custom tags appear per setup in the Journal Entry form.</p>
+        <div class="mini-form">
+          <select v-model="tagLink.setupId" @change="onTagLinkSetupChange">
+            <option value="" disabled>Select Setup…</option>
+            <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+        </div>
+        <div v-if="tagLink.setupId && customTags.length" class="check-list">
+          <label class="check-item check-all">
+            <input
+              type="checkbox"
+              :checked="tagAllChecked"
+              :indeterminate="tagSomeChecked && !tagAllChecked"
+              @change="toggleAllTags($event.target.checked)"
+            />
+            <span>All</span>
+          </label>
+          <label v-for="t in customTags" :key="t.id" class="check-item">
+            <input type="checkbox" v-model="tagLink.checkedIds" :value="t.id" />
+            <span>{{ t.name }}</span>
+          </label>
+          <button class="btn-save btn-save--green" @click="saveCustomTagLinks">Save</button>
+        </div>
+        <p v-else-if="tagLink.setupId" class="empty">No custom tags available.</p>
+        <div v-for="setup in setups" :key="setup.id" class="link-group">
+          <div class="link-title">{{ setup.name }}</div>
+          <div v-if="setup.linkedCustomTags" class="link-chips">
+            <span
+              v-for="tagName in setup.linkedCustomTags.split(',')"
+              :key="tagName"
+              class="link-chip link-chip--green"
+            >
+              {{ tagName.trim() }}
+              <button @click="unlinkCustomTag(setup.id, tagName.trim())">×</button>
+            </span>
+          </div>
+          <span v-else class="sub">No custom tags linked</span>
         </div>
       </section>
 
@@ -365,6 +614,80 @@ function flashError(e) {
           No session ranges configured for this setup.
         </p>
         <p v-else class="empty">Select a setup to view / add session time ranges.</p>
+      </section>
+
+      <!-- ── RR Types ────────────────────────────────────────────────── -->
+      <section class="card">
+        <h3>RR Types</h3>
+        <p class="hint">
+          Add named RR targets with a multiplier ratio. They will appear as a dropdown per setup in
+          the Journal Entry form.
+        </p>
+        <form class="mini-form" @submit.prevent="createRRType">
+          <input v-model="newRRType.name" placeholder="Display name (e.g. RR 1:2)" required />
+          <input
+            v-model="newRRType.ratio"
+            type="number"
+            step="0.1"
+            min="0.1"
+            placeholder="Ratio (e.g. 2)"
+            required
+          />
+          <button type="submit">Add RR Type</button>
+        </form>
+        <ul class="item-list">
+          <li v-for="r in rrTypes" :key="r.id">
+            <div>
+              <strong>{{ r.name }}</strong>
+              <span class="sub">ratio 1:{{ r.ratio }}</span>
+            </div>
+            <button class="btn-del" @click="deleteRRType(r.id)">✕</button>
+          </li>
+          <li v-if="!rrTypes.length" class="empty">No RR types yet.</li>
+        </ul>
+      </section>
+
+      <!-- ── Link Setup ↔ RR Type ────────────────────────────────────────── -->
+      <section class="card">
+        <h3>Link Setup → RR Type</h3>
+        <p class="hint">Controls which RR types appear in the Journal Entry dropdown per setup.</p>
+        <div class="mini-form">
+          <select v-model="rrLink.setupId" @change="onRRLinkSetupChange">
+            <option value="" disabled>Select Setup…</option>
+            <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+        </div>
+        <div v-if="rrLink.setupId && rrTypes.length" class="check-list">
+          <label class="check-item check-all">
+            <input
+              type="checkbox"
+              :checked="rrAllChecked"
+              :indeterminate="rrSomeChecked && !rrAllChecked"
+              @change="toggleAllRR($event.target.checked)"
+            />
+            <span>All</span>
+          </label>
+          <label v-for="r in rrTypes" :key="r.id" class="check-item">
+            <input type="checkbox" v-model="rrLink.checkedIds" :value="r.id" />
+            <span>{{ r.name }} <span class="rr-ratio">(1:{{ r.ratio }})</span></span>
+          </label>
+          <button class="btn-save btn-save--orange" @click="saveRRTypeLinks">Save</button>
+        </div>
+        <p v-else-if="rrLink.setupId" class="empty">No RR types available. Add some above first.</p>
+        <div v-for="setup in setups" :key="setup.id" class="link-group">
+          <div class="link-title">{{ setup.name }}</div>
+          <div v-if="setup.linkedRRTypes" class="link-chips">
+            <span
+              v-for="rrName in setup.linkedRRTypes.split(',')"
+              :key="rrName"
+              class="link-chip link-chip--orange"
+            >
+              {{ rrName.trim() }}
+              <button @click="unlinkRRType(setup.id, rrName.trim())">×</button>
+            </span>
+          </div>
+          <span v-else class="sub">No RR types linked</span>
+        </div>
       </section>
     </div>
   </div>
@@ -535,6 +858,13 @@ function flashError(e) {
   padding: 0;
   line-height: 1;
 }
+.link-chip--green {
+  background: #052e16;
+  color: #4ade80;
+}
+.link-chip--green button {
+  color: #4ade80;
+}
 
 /* Session time range section */
 .sess-form-row {
@@ -601,5 +931,129 @@ function flashError(e) {
 .empty {
   color: #555;
   font-size: 0.88rem;
+}
+
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #252525;
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: #e0e0e0;
+  user-select: none;
+}
+.check-item:hover {
+  background: #2e2e2e;
+}
+.check-item input[type='checkbox'] {
+  accent-color: #4f9cf9;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.check-all {
+  border-bottom: 1px solid #333;
+  border-radius: 6px 6px 0 0;
+  font-weight: 600;
+  color: #aaa;
+}
+.btn-save {
+  margin-top: 6px;
+  padding: 8px;
+  background: #4f9cf9;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.btn-save--green {
+  background: #166534;
+  color: #4ade80;
+}
+.btn-save--orange {
+  background: #7c2d12;
+  color: #fb923c;
+}
+.link-chip--orange {
+  background: #431407;
+  color: #fb923c;
+}
+.link-chip--orange button {
+  color: #fb923c;
+}
+.rr-ratio {
+  font-size: 0.78rem;
+  color: #fb923c;
+  margin-left: 2px;
+}
+
+/* ── Confirm Modal ──────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.modal-box {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 28px 32px;
+  min-width: 320px;
+  max-width: 440px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+.modal-msg {
+  margin: 0 0 22px;
+  font-size: 0.95rem;
+  color: #e0e0e0;
+  line-height: 1.6;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.modal-btn {
+  padding: 8px 20px;
+  border-radius: 7px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+}
+.modal-btn:hover { opacity: 0.85; }
+.modal-btn--cancel {
+  background: #2e2e2e;
+  color: #aaa;
+  border: 1px solid #444;
+}
+.modal-btn--confirm {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
 }
 </style>

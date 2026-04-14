@@ -11,6 +11,11 @@ const api = {
   unlinkStrategy: (setupId, strategyId) =>
     ipcRenderer.invoke('setups:unlinkStrategy', { setupId, strategyId }),
   getStrategiesForSetup: (setupId) => ipcRenderer.invoke('setups:getStrategies', setupId),
+  linkCustomTag: (setupId, customTagId) =>
+    ipcRenderer.invoke('setups:linkCustomTag', { setupId, customTagId }),
+  unlinkCustomTag: (setupId, customTagId) =>
+    ipcRenderer.invoke('setups:unlinkCustomTag', { setupId, customTagId }),
+  getCustomTagsForSetup: (setupId) => ipcRenderer.invoke('setups:getCustomTags', setupId),
 
   // ── Strategies ────────────────────────────────────────────────────────────
   getAllStrategies: () => ipcRenderer.invoke('strategies:getAll'),
@@ -32,17 +37,28 @@ const api = {
   setSetting: (key, value) => ipcRenderer.invoke('settings:set', { key, value }),
 
   // ── App / DB Management ───────────────────────────────────────────────────
-  getDbPath:      () => ipcRenderer.invoke('app:getDbPath'),
+  getDbPath: () => ipcRenderer.invoke('app:getDbPath'),
   chooseDbFolder: () => ipcRenderer.invoke('app:chooseDbFolder'),
-  exportDb:       () => ipcRenderer.invoke('app:exportDb'),
-  importDb:       () => ipcRenderer.invoke('app:importDb'),
-  openExternal:   (url) => ipcRenderer.invoke('app:openExternal', url),
-  fetchImageUrl:  (url) => ipcRenderer.invoke('app:fetchImageUrl', url),
+  exportDb: () => ipcRenderer.invoke('app:exportDb'),
+  importDb: () => ipcRenderer.invoke('app:importDb'),
+  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  fetchImageUrl: (url) => ipcRenderer.invoke('app:fetchImageUrl', url),
+  fetchImageAsBase64: (url) => ipcRenderer.invoke('app:fetchImageAsBase64', url),
 
   // ── Custom Tags ───────────────────────────────────────────────────────────
   getAllCustomTags: () => ipcRenderer.invoke('customTags:getAll'),
   createCustomTag: (data) => ipcRenderer.invoke('customTags:create', data),
   deleteCustomTag: (id) => ipcRenderer.invoke('customTags:delete', id),
+
+  // ── RR Types ──────────────────────────────────────────────────────────────
+  getAllRRTypes: () => ipcRenderer.invoke('rrTypes:getAll'),
+  createRRType: (data) => ipcRenderer.invoke('rrTypes:create', data),
+  deleteRRType: (id) => ipcRenderer.invoke('rrTypes:delete', id),
+  getRRTypesForSetup: (setupId) => ipcRenderer.invoke('setups:getRRTypes', setupId),
+  linkRRType: (setupId, rrTypeId) =>
+    ipcRenderer.invoke('setups:linkRRType', { setupId, rrTypeId }),
+  unlinkRRType: (setupId, rrTypeId) =>
+    ipcRenderer.invoke('setups:unlinkRRType', { setupId, rrTypeId }),
 
   // ── Journal Entries ───────────────────────────────────────────────────────
   createJournal: (data) => ipcRenderer.invoke('journals:create', data),

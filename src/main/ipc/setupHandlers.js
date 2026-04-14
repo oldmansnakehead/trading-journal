@@ -15,10 +15,17 @@ export function registerSetupHandlers() {
   handle('setups:getAll', () => {
     return db
       .prepare(
-        `SELECT ts.*, GROUP_CONCAT(s.name, ', ') AS linkedStrategies
+        `SELECT ts.*,
+                GROUP_CONCAT(DISTINCT s.name)   AS linkedStrategies,
+                GROUP_CONCAT(DISTINCT ct.name)  AS linkedCustomTags,
+                GROUP_CONCAT(DISTINCT rrt.name) AS linkedRRTypes
          FROM TradeSetups ts
-         LEFT JOIN Setup_Strategies ss ON ts.id = ss.setupId
-         LEFT JOIN Strategies s        ON ss.strategyId = s.id
+         LEFT JOIN Setup_Strategies ss  ON ts.id = ss.setupId
+         LEFT JOIN Strategies s         ON ss.strategyId = s.id
+         LEFT JOIN Setup_CustomTags sct ON ts.id = sct.setupId
+         LEFT JOIN CustomTags ct        ON sct.customTagId = ct.id
+         LEFT JOIN Setup_RRTypes srt    ON ts.id = srt.setupId
+         LEFT JOIN RRTypes rrt          ON srt.rrTypeId = rrt.id
          GROUP BY ts.id
          ORDER BY ts.name`
       )
@@ -76,6 +83,32 @@ export function registerSetupHandlers() {
     return { ok: true }
   })
 
+  // ── Custom Tag link / unlink / get (per-setup) ────────────────────────────
+
+  handle('setups:getCustomTags', (_event, setupId) =>
+    db.prepare(
+      `SELECT ct.*
+       FROM CustomTags ct
+       INNER JOIN Setup_CustomTags sct ON ct.id = sct.customTagId
+       WHERE sct.setupId = ?
+       ORDER BY ct.name`
+    ).all(setupId)
+  )
+
+  handle('setups:linkCustomTag', (_event, { setupId, customTagId }) => {
+    db.prepare(
+      'INSERT OR IGNORE INTO Setup_CustomTags (setupId, customTagId) VALUES (?, ?)'
+    ).run(setupId, customTagId)
+    return { ok: true }
+  })
+
+  handle('setups:unlinkCustomTag', (_event, { setupId, customTagId }) => {
+    db.prepare(
+      'DELETE FROM Setup_CustomTags WHERE setupId = ? AND customTagId = ?'
+    ).run(setupId, customTagId)
+    return { ok: true }
+  })
+
   // ── Delete ────────────────────────────────────────────────────────────────
 
   handle('setups:delete', (_event, id) => {
@@ -110,6 +143,50 @@ export function registerSetupHandlers() {
 
   handle('settings:set', (_event, { key, value }) => {
     db.prepare('INSERT OR REPLACE INTO Settings (key, value) VALUES (?, ?)').run(key, String(value))
+    return { ok: true }
+  })
+
+  // ── RR Types (global CRUD) ────────────────────────────────────────────────────
+
+  handle('rrTypes:getAll', () =>
+    db.prepare('SELECT * FROM RRTypes ORDER BY ratio, name').all()
+  )
+
+  handle('rrTypes:create', (_event, { name, ratio }) => {
+    const { lastInsertRowid } = db
+      .prepare('INSERT INTO RRTypes (name, ratio) VALUES (?, ?)')
+      .run(name.trim(), Number(ratio))
+    return db.prepare('SELECT * FROM RRTypes WHERE id = ?').get(lastInsertRowid)
+  })
+
+  handle('rrTypes:delete', (_event, id) => {
+    db.prepare('DELETE FROM RRTypes WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
+  // ── RR Types (per-setup link / unlink / get) ───────────────────────────────
+
+  handle('setups:getRRTypes', (_event, setupId) =>
+    db.prepare(
+      `SELECT rrt.*
+       FROM RRTypes rrt
+       INNER JOIN Setup_RRTypes srt ON rrt.id = srt.rrTypeId
+       WHERE srt.setupId = ?
+       ORDER BY rrt.ratio, rrt.name`
+    ).all(setupId)
+  )
+
+  handle('setups:linkRRType', (_event, { setupId, rrTypeId }) => {
+    db.prepare(
+      'INSERT OR IGNORE INTO Setup_RRTypes (setupId, rrTypeId) VALUES (?, ?)'
+    ).run(setupId, rrTypeId)
+    return { ok: true }
+  })
+
+  handle('setups:unlinkRRType', (_event, { setupId, rrTypeId }) => {
+    db.prepare(
+      'DELETE FROM Setup_RRTypes WHERE setupId = ? AND rrTypeId = ?'
+    ).run(setupId, rrTypeId)
     return { ok: true }
   })
 }

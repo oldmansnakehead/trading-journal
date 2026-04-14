@@ -2,27 +2,29 @@
 import { ref, watch, computed, onMounted } from 'vue'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const POSITIONS      = ['Buy', 'Sell']
-const RR_TYPES       = ['RR 1:2', 'RR 1:3 Top 50%', 'RR 1:3 Bottom 50%', 'RR 1:4', 'RR 1:5']
-const RESULTS        = ['Win', 'Loss', 'Breakeven']
+const POSITIONS = ['Buy', 'Sell']
+const RESULTS = ['Win', 'Loss', 'Breakeven']
 const DIRECTION_BIAS = ['Bullish', 'Bearish']
-const TF_OPTIONS     = ['M1', 'M3', 'M5', 'M15', 'M30', 'H1', 'H4']
-const ALL_SESSIONS   = ['New York', 'London', 'London Close', 'Asia', 'Tokyo']
+const TF_OPTIONS = ['M1', 'M3', 'M5', 'M15', 'M30', 'H1', 'H4']
+const ALL_SESSIONS = ['New York', 'London', 'London Close', 'Asia', 'Tokyo']
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const setups     = ref([])
+const setups = ref([])
 const strategies = ref([])
-const symbols    = ref([])
-const setupSessions    = ref([])   // session time ranges for selected setup
-const allSetupSessions = ref([])   // all sessions across all setups (for global detection)
-const customTags        = ref([])
-const customColumnName  = ref('Custom Tag')
+const symbols = ref([])
+const setupSessions = ref([]) // session time ranges for selected setup
+const allSetupSessions = ref([]) // all sessions across all setups (for global detection)
+const customTags = ref([])
+const customColumnName = ref('Custom Tag')
 const selectedCustomTagIds = ref([])
 const imageUrlInputs = ref([''])
+const hasNews = ref(false)
+const colorRating = ref('')
+const setupRRTypes = ref([]) // RR types linked to the selected setup
 
-const submitMsg          = ref('')
-const submitError        = ref('')
-const isSubmitting       = ref(false)
+const submitMsg = ref('')
+const submitError = ref('')
+const isSubmitting = ref(false)
 const sessionAutoDetected = ref(false)
 const nativeEntryDateRef = ref(null)
 const nativeExitDateRef = ref(null)
@@ -30,34 +32,33 @@ const nativeExitDateRef = ref(null)
 const selectedStrategyIds = ref([])
 
 const form = ref({
-  entryDate:     '',
-  entryTime:     '',
-  exitDate:      '',
-  exitTime:      '',
-  symbol:        '',
-  session:       '',
-  position:      'Buy',
+  entryDate: '',
+  entryTime: '',
+  exitDate: '',
+  exitTime: '',
+  symbol: '',
+  session: '',
+  position: 'Buy',
   directionBias: 'Bullish',
-  setupId:       '',
-  tf:            'M1',
-  rrType:        'RR 1:2',
-  slPoint:       '',
-  tpPoint:       '',
-  result:        'Win',
-  notes:         ''
+  setupId: '',
+  tf: 'M1',
+  rrTypeId: '',
+  slPoint: '',
+  tpPoint: '',
+  result: 'Win',
+  notes: ''
 })
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(async () => {
-  ;[setups.value, symbols.value, customTags.value] = await Promise.all([
+  ;[setups.value, symbols.value] = await Promise.all([
     window.api.getAllSetups(),
-    window.api.getAllSymbols(),
-    window.api.getAllCustomTags()
+    window.api.getAllSymbols()
   ])
   const s = await window.api.getAllSettings()
   customColumnName.value = s.customColumnName || 'Custom Tag'
   // Load all session ranges for global time detection (before setup is selected)
-  const allArrays = await Promise.all(setups.value.map(st => window.api.getSetupSessions(st.id)))
+  const allArrays = await Promise.all(setups.value.map((st) => window.api.getSetupSessions(st.id)))
   allSetupSessions.value = allArrays.flat()
 })
 
@@ -66,33 +67,40 @@ watch(
   () => form.value.setupId,
   async (newSetupId) => {
     selectedStrategyIds.value = []
+    selectedCustomTagIds.value = []
     strategies.value = []
+    customTags.value = []
     setupSessions.value = []
+    setupRRTypes.value = []
+    form.value.rrTypeId = ''
     if (newSetupId) {
-      ;[strategies.value, setupSessions.value] = await Promise.all([
-        window.api.getStrategiesForSetup(Number(newSetupId)),
-        window.api.getSetupSessions(Number(newSetupId))
-      ])
+      ;[strategies.value, setupSessions.value, customTags.value, setupRRTypes.value] =
+        await Promise.all([
+          window.api.getStrategiesForSetup(Number(newSetupId)),
+          window.api.getSetupSessions(Number(newSetupId)),
+          window.api.getCustomTagsForSetup(Number(newSetupId)),
+          window.api.getRRTypesForSetup(Number(newSetupId))
+        ])
       if (strategies.value.length === 1) {
         selectedStrategyIds.value = [strategies.value[0].id]
+      }
+      if (setupRRTypes.value.length === 1) {
+        form.value.rrTypeId = setupRRTypes.value[0].id
       }
     }
   }
 )
 
 // ── Auto-detect session whenever entryTime or setupSessions changes ───────────
-watch(
-  [() => form.value.entryTime, setupSessions],
-  ([time]) => {
-    const detected = detectSession(time)
-    if (detected) {
-      form.value.session = detected
-      sessionAutoDetected.value = true
-    } else {
-      sessionAutoDetected.value = false
-    }
+watch([() => form.value.entryTime, setupSessions], ([time]) => {
+  const detected = detectSession(time)
+  if (detected) {
+    form.value.session = detected
+    sessionAutoDetected.value = true
+  } else {
+    sessionAutoDetected.value = false
   }
-)
+})
 
 // ── Auto-detect session from entry time ───────────────────────────────────────
 function detectSession(timeStr) {
@@ -105,7 +113,7 @@ function detectSession(timeStr) {
     const [sh, sm] = sess.startTime.split(':').map(Number)
     const [eh, em] = sess.endTime.split(':').map(Number)
     const start = sh * 60 + sm
-    const end   = eh * 60 + em
+    const end = eh * 60 + em
 
     if (start <= end) {
       if (mins >= start && mins <= end) return sess.sessionName
@@ -130,13 +138,15 @@ const sortedCustomTags = computed(() =>
   )
 )
 
-// ── TP Point auto-calc from SL + RR Type ─────────────────────────────────────
+// ── TP Point auto-calc from SL + selected RR type ratio ───────────────────
+const selectedRRType = computed(
+  () => setupRRTypes.value.find((r) => r.id === form.value.rrTypeId) ?? null
+)
+
 const tpComputed = computed(() => {
   const sl = parseFloat(form.value.slPoint)
-  if (!sl || !form.value.rrType) return ''
-  const match = form.value.rrType.match(/1:(\d+)/)
-  if (!match) return ''
-  return +(sl * Number(match[1])).toFixed(2)
+  if (!sl || !selectedRRType.value) return ''
+  return +(sl * selectedRRType.value.ratio).toFixed(2)
 })
 
 watch(tpComputed, (val) => {
@@ -191,11 +201,7 @@ function parseThaiDisplayDate(displayDate) {
   const year = Number(m[3])
 
   const d = new Date(year, month - 1, day)
-  if (
-    d.getFullYear() !== year ||
-    d.getMonth() !== month - 1 ||
-    d.getDate() !== day
-  ) {
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
     return null
   }
 
@@ -252,6 +258,10 @@ async function handleSubmit() {
     submitError.value = 'กรุณาเลือก Setup และ Strategy'
     return
   }
+  if (!form.value.rrTypeId) {
+    submitError.value = 'กรุณาเลือก RR Type'
+    return
+  }
   if (!form.value.entryDate || !form.value.entryTime) {
     submitError.value = 'กรุณากรอกวันและเวลา Entry'
     return
@@ -271,9 +281,7 @@ async function handleSubmit() {
 
   isSubmitting.value = true
   try {
-    const imageUrls = imageUrlInputs.value
-      .map((url) => url.trim())
-      .filter(Boolean)
+    const imageUrls = imageUrlInputs.value.map((url) => url.trim()).filter(Boolean)
 
     for (const url of imageUrls) {
       try {
@@ -288,22 +296,24 @@ async function handleSubmit() {
 
     await window.api.createJournal({
       entryDateTime: buildIso(form.value.entryDate, form.value.entryTime),
-      exitDateTime:  buildIso(form.value.exitDate,  form.value.exitTime),
-      symbol:        form.value.symbol,
-      session:       form.value.session || 'New York',
-      position:      form.value.position,
+      exitDateTime: buildIso(form.value.exitDate, form.value.exitTime),
+      symbol: form.value.symbol,
+      session: form.value.session || 'New York',
+      position: form.value.position,
       directionBias: form.value.directionBias,
-      tf:            form.value.tf,
-      rrType:        form.value.rrType,
-      slPoint:       form.value.slPoint !== '' ? parseFloat(form.value.slPoint) : null,
-      tpPoint:       form.value.tpPoint !== '' ? parseFloat(form.value.tpPoint) : null,
-      result:        form.value.result,
+      tf: form.value.tf,
+      rrType: selectedRRType.value?.name ?? '',
+      slPoint: form.value.slPoint !== '' ? parseFloat(form.value.slPoint) : null,
+      tpPoint: form.value.tpPoint !== '' ? parseFloat(form.value.tpPoint) : null,
+      result: form.value.result,
       imageUrls,
-      notes:         form.value.notes || null,
-      setupId:       Number(form.value.setupId),
+      notes: form.value.notes || null,
+      setupId: Number(form.value.setupId),
+      hasNews: hasNews.value ? 1 : 0,
+      colorRating: colorRating.value || null,
       // Convert Vue reactive arrays into plain arrays for Electron IPC structured clone.
-      strategyIds:   [...selectedStrategyIds.value],
-      customTagIds:  [...selectedCustomTagIds.value]
+      strategyIds: [...selectedStrategyIds.value],
+      customTagIds: [...selectedCustomTagIds.value]
     })
 
     submitMsg.value = 'บันทึกการเทรดเรียบร้อย! (ฟอร์มคงค่าเดิมไว้)'
@@ -316,17 +326,32 @@ async function handleSubmit() {
 
 function resetForm() {
   form.value = {
-    entryDate: '', entryTime: '', exitDate: '', exitTime: '',
-    symbol: '', session: '', position: 'Buy', directionBias: 'Bullish',
-    setupId: '', tf: 'M1', rrType: 'RR 1:2',
-    slPoint: '', tpPoint: '', result: 'Win', notes: ''
+    entryDate: '',
+    entryTime: '',
+    exitDate: '',
+    exitTime: '',
+    symbol: '',
+    session: '',
+    position: 'Buy',
+    directionBias: 'Bullish',
+    setupId: '',
+    tf: 'M1',
+    rrTypeId: '',
+    slPoint: '',
+    tpPoint: '',
+    result: 'Win',
+    notes: ''
   }
   selectedStrategyIds.value = []
-  strategies.value          = []
-  setupSessions.value       = []
+  strategies.value = []
+  customTags.value = []
+  setupSessions.value = []
+  setupRRTypes.value = []
   sessionAutoDetected.value = false
   selectedCustomTagIds.value = []
   imageUrlInputs.value = ['']
+  hasNews.value = false
+  colorRating.value = ''
 }
 </script>
 
@@ -335,7 +360,6 @@ function resetForm() {
     <h2 class="view-title">New Journal Entry</h2>
 
     <form class="entry-form" @submit.prevent="handleSubmit">
-
       <!-- Row 1: Entry & Exit datetime -->
       <div class="form-row">
         <div class="form-group datetime-group">
@@ -368,9 +392,12 @@ function resetForm() {
             </div>
             <input
               :value="form.entryTime"
-              type="text" placeholder="HH:MM" maxlength="5"
+              type="text"
+              placeholder="HH:MM"
+              maxlength="5"
               pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$"
-              class="time-input" required
+              class="time-input"
+              required
               @input="onTimeInput('entryTime', $event)"
             />
           </div>
@@ -404,7 +431,9 @@ function resetForm() {
             </div>
             <input
               :value="form.exitTime"
-              type="text" placeholder="HH:MM" maxlength="5"
+              type="text"
+              placeholder="HH:MM"
+              maxlength="5"
               pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$"
               class="time-input"
               @input="onTimeInput('exitTime', $event)"
@@ -424,7 +453,11 @@ function resetForm() {
         </div>
         <div class="form-group">
           <label>Session <span class="auto-tag">(auto)</span></label>
-          <select v-model="form.session" class="session-select" :class="sessionAutoDetected ? 'session-detected' : ''">
+          <select
+            v-model="form.session"
+            class="session-select"
+            :class="sessionAutoDetected ? 'session-detected' : ''"
+          >
             <option value="" disabled>Select session…</option>
             <option v-for="s in ALL_SESSIONS" :key="s" :value="s">{{ s }}</option>
           </select>
@@ -465,14 +498,19 @@ function resetForm() {
         <label>Strategy * <span class="auto-tag">(multi-select)</span></label>
         <div class="tag-picker">
           <button
-            v-for="s in sortedStrategies" :key="s.id"
+            v-for="s in sortedStrategies"
+            :key="s.id"
             type="button"
             class="tag-chip tag-chip--blue"
             :class="{ active: selectedStrategyIds.includes(s.id) }"
             @click="toggleStrategy(s.id)"
-          >{{ s.name }}</button>
+          >
+            {{ s.name }}
+          </button>
           <span v-if="!form.setupId" class="tag-empty">Select a setup first</span>
-          <span v-else-if="!strategies.length" class="tag-empty">No strategies linked to this setup</span>
+          <span v-else-if="!strategies.length" class="tag-empty"
+            >No strategies linked to this setup</span
+          >
         </div>
       </div>
 
@@ -480,9 +518,27 @@ function resetForm() {
       <div class="form-row">
         <div class="form-group">
           <label>RR Type *</label>
-          <select v-model="form.rrType" required>
-            <option v-for="r in RR_TYPES" :key="r" :value="r">{{ r }}</option>
+          <select
+            v-model="form.rrTypeId"
+            :disabled="!form.setupId || !setupRRTypes.length"
+            required
+          >
+            <option value="" disabled>
+              {{
+                !form.setupId
+                  ? 'Select a setup first'
+                  : !setupRRTypes.length
+                    ? 'No RR types linked'
+                    : 'Select RR type…'
+              }}
+            </option>
+            <option v-for="r in setupRRTypes" :key="r.id" :value="r.id">
+              {{ r.name }}
+            </option>
           </select>
+          <span v-if="form.setupId && !setupRRTypes.length" class="rr-hint">
+            ⚠ No RR types linked — go to Setup Manager → RR Types
+          </span>
         </div>
         <div class="form-group">
           <label>SL Point</label>
@@ -490,13 +546,18 @@ function resetForm() {
         </div>
         <div class="form-group">
           <label>TP Point <span class="auto-tag">(auto)</span></label>
-          <input :value="form.tpPoint" type="text" readonly class="session-display"
+          <input
+            :value="form.tpPoint"
+            type="text"
+            readonly
+            class="session-display"
             :class="form.tpPoint ? 'session-detected' : 'session-empty'"
-            :placeholder="form.slPoint ? '—' : 'Fill SL first'" />
+            :placeholder="form.slPoint ? '—' : 'Fill SL first'"
+          />
         </div>
       </div>
 
-      <!-- Row 5: Result -->
+      <!-- Row 5: Result + News + Color Rating -->
       <div class="form-row">
         <div class="form-group">
           <label>Result *</label>
@@ -504,20 +565,53 @@ function resetForm() {
             <option v-for="r in RESULTS" :key="r" :value="r">{{ r }}</option>
           </select>
         </div>
+        <div class="form-group">
+          <label>News</label>
+          <label class="checkbox-field">
+            <input v-model="hasNews" type="checkbox" />
+            <span>{{ hasNews ? 'มีข่าว' : 'ไม่มีข่าว' }}</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>ระดับสี (Quality)</label>
+          <div class="color-picker">
+            <button
+              v-for="c in [
+                ['red', 'แดง'],
+                ['orange', 'ส้ม'],
+                ['yellow', 'เหลือง'],
+                ['green', 'เขียว']
+              ]"
+              :key="c[0]"
+              type="button"
+              class="color-chip"
+              :class="[`color-chip--${c[0]}`, { active: colorRating === c[0] }]"
+              @click="colorRating = colorRating === c[0] ? '' : c[0]"
+            >
+              {{ c[1] }}
+            </button>
+          </div>
+        </div>
       </div>
 
-      <!-- Custom Tags (multi-select chip picker) -->
+      <!-- Custom Tags (multi-select chip picker — setup-specific) -->
       <div class="form-group full-width">
         <label>{{ customColumnName }} <span class="auto-tag">(multi-select)</span></label>
         <div class="tag-picker">
           <button
-            v-for="t in sortedCustomTags" :key="t.id"
+            v-for="t in sortedCustomTags"
+            :key="t.id"
             type="button"
             class="tag-chip"
             :class="{ active: selectedCustomTagIds.includes(t.id) }"
             @click="toggleCustomTag(t.id)"
-          >{{ t.name }}</button>
-          <span v-if="!customTags.length" class="tag-empty">No tags — add in Setup Manager → Custom Column</span>
+          >
+            {{ t.name }}
+          </button>
+          <span v-if="!form.setupId" class="tag-empty">Select a setup first</span>
+          <span v-else-if="!customTags.length" class="tag-empty"
+            >No tags linked to this setup — add in Setup Manager → Link Setup → Custom Tag</span
+          >
         </div>
       </div>
 
@@ -531,9 +625,13 @@ function resetForm() {
               type="url"
               placeholder="https://example.com/image.png"
             />
-            <button type="button" class="btn-url-remove" @click="removeImageUrlField(idx)">Remove</button>
+            <button type="button" class="btn-url-remove" @click="removeImageUrlField(idx)">
+              Remove
+            </button>
           </div>
-          <button type="button" class="btn-url-add" @click="addImageUrlField">+ Add Image URL</button>
+          <button type="button" class="btn-url-add" @click="addImageUrlField">
+            + Add Image URL
+          </button>
         </div>
       </div>
 
@@ -545,42 +643,92 @@ function resetForm() {
 
       <!-- Session hint -->
       <div v-if="form.setupId && !setupSessions.length" class="hint-box">
-        ⚠ No session time ranges configured for this setup. Go to Setup Manager → Session Time Ranges to add them.
+        ⚠ No session time ranges configured for this setup. Go to Setup Manager → Session Time
+        Ranges to add them.
       </div>
 
       <!-- Submit -->
       <div class="form-actions">
-        <p v-if="submitMsg"   class="msg-success">{{ submitMsg }}</p>
+        <p v-if="submitMsg" class="msg-success">{{ submitMsg }}</p>
         <p v-if="submitError" class="msg-error">{{ submitError }}</p>
         <button type="submit" :disabled="isSubmitting">
           {{ isSubmitting ? 'Saving…' : 'Log Trade' }}
         </button>
         <button type="button" class="btn-secondary" @click="resetForm">Reset</button>
       </div>
-
     </form>
   </div>
 </template>
 
 <style scoped>
-.view-container { max-width: 900px; margin: 0 auto; padding: 24px; }
-.view-title     { font-size: 1.4rem; font-weight: 600; margin-bottom: 24px; }
+.view-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.view-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 24px;
+}
 
-.entry-form  { display: flex; flex-direction: column; gap: 16px; }
-.form-row    { display: flex; gap: 16px; flex-wrap: wrap; }
+.entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.form-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 
-.form-group  { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 140px; }
-.form-group.full-width  { flex: 0 0 100%; }
-.form-group.datetime-group { min-width: 260px; }
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 140px;
+}
+.form-group.full-width {
+  flex: 0 0 100%;
+}
+.form-group.datetime-group {
+  min-width: 260px;
+}
 
-label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase;
-        letter-spacing: 0.05em; color: #888; }
-.auto-tag { font-weight: 400; text-transform: none; color: #4f9cf9; margin-left: 4px; }
+label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+.auto-tag {
+  font-weight: 400;
+  text-transform: none;
+  color: #4f9cf9;
+  margin-left: 4px;
+}
 
-.dt-inputs { display: flex; gap: 8px; }
-.date-input-wrap { position: relative; flex: 3; min-width: 0; }
-.date-input-wrap > input[type='text'] { width: 100%; padding-right: 38px; }
-.dt-inputs .time-input        { flex: 0 0 72px; text-align: center; letter-spacing: 0.05em; }
+.dt-inputs {
+  display: flex;
+  gap: 8px;
+}
+.date-input-wrap {
+  position: relative;
+  flex: 3;
+  min-width: 0;
+}
+.date-input-wrap > input[type='text'] {
+  width: 100%;
+  padding-right: 38px;
+}
+.dt-inputs .time-input {
+  flex: 0 0 72px;
+  text-align: center;
+  letter-spacing: 0.05em;
+}
 .date-picker-btn {
   position: absolute;
   top: 50%;
@@ -603,40 +751,178 @@ label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase;
   pointer-events: none;
 }
 
-.session-select.session-detected { color: #4ade80; border-color: #166534; }
-
-input, select, textarea {
-  padding: 8px 10px; border: 1px solid #333; border-radius: 6px;
-  background: #1e1e1e; color: #e0e0e0; font-size: 0.9rem; transition: border-color .2s;
+.session-select.session-detected {
+  color: #4ade80;
+  border-color: #166534;
 }
-input:focus, select:focus, textarea:focus { outline: none; border-color: #4f9cf9; }
-input:disabled, select:disabled { opacity: 0.4; cursor: not-allowed; }
-textarea { resize: vertical; }
+
+input,
+select,
+textarea {
+  padding: 8px 10px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  transition: border-color 0.2s;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #4f9cf9;
+}
+input:disabled,
+select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+textarea {
+  resize: vertical;
+}
 
 .hint-box {
-  background: #1a1200; border: 1px solid #554400; border-radius: 6px;
-  color: #facc15; font-size: 0.84rem; padding: 10px 14px;
+  background: #1a1200;
+  border: 1px solid #554400;
+  border-radius: 6px;
+  color: #facc15;
+  font-size: 0.84rem;
+  padding: 10px 14px;
 }
 
-.form-actions  { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
-button         { padding: 9px 22px; background: #4f9cf9; color: #fff; border: none;
-                 border-radius: 6px; font-size: 0.9rem; cursor: pointer; font-weight: 600; }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-secondary { background: #333; }
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+button {
+  padding: 9px 22px;
+  background: #4f9cf9;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-secondary {
+  background: #333;
+}
 
-.msg-success { color: #4ade80; font-size: 0.88rem; }
-.msg-error   { color: #f87171; font-size: 0.88rem; }
+.msg-success {
+  color: #4ade80;
+  font-size: 0.88rem;
+}
+.msg-error {
+  color: #f87171;
+  font-size: 0.88rem;
+}
 
-.tag-picker { display: flex; flex-wrap: wrap; gap: 8px; min-height: 36px; align-items: center; }
+.tag-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 36px;
+  align-items: center;
+}
 .tag-chip {
-  padding: 5px 14px; border: 1px solid #444; border-radius: 20px;
-  background: #1e1e1e; color: #aaa; cursor: pointer; font-size: 0.84rem;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  padding: 5px 14px;
+  border: 1px solid #444;
+  border-radius: 20px;
+  background: #1e1e1e;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.84rem;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
 }
-.tag-chip.active { background: #1a3a1a; border-color: #4ade80; color: #4ade80; }
-.tag-chip--blue.active { background: #0f2a4a; border-color: #4f9cf9; color: #4f9cf9; }
-.tag-chip:hover:not(.active) { border-color: #555; color: #ccc; }
-.tag-empty { font-size: 0.82rem; color: #555; font-style: italic; }
+.tag-chip.active {
+  background: #1a3a1a;
+  border-color: #4ade80;
+  color: #4ade80;
+}
+.tag-chip--blue.active {
+  background: #0f2a4a;
+  border-color: #4f9cf9;
+  color: #4f9cf9;
+}
+.tag-chip:hover:not(.active) {
+  border-color: #555;
+  color: #ccc;
+}
+.tag-empty {
+  font-size: 0.82rem;
+  color: #555;
+  font-style: italic;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1e1e1e;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #e0e0e0;
+  user-select: none;
+}
+.checkbox-field input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #4f9cf9;
+}
+
+.color-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.color-chip {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1px solid #444;
+  background: #1e1e1e;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.84rem;
+  transition: all 0.15s;
+}
+.color-chip--red.active {
+  background: #450a0a;
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.color-chip--orange.active {
+  background: #431407;
+  border-color: #f97316;
+  color: #f97316;
+}
+.color-chip--yellow.active {
+  background: #422006;
+  border-color: #eab308;
+  color: #eab308;
+}
+.color-chip--green.active {
+  background: #052e16;
+  border-color: #22c55e;
+  color: #22c55e;
+}
+.color-chip:hover:not(.active) {
+  border-color: #555;
+  color: #ccc;
+}
 
 .image-url-list {
   display: flex;
@@ -662,5 +948,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .btn-url-add {
   align-self: flex-start;
+}
+
+.rr-hint {
+  font-size: 0.78rem;
+  color: #fb923c;
+  margin-top: 3px;
+}
+
+.session-display.session-empty {
+  color: #555;
 }
 </style>

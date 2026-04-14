@@ -267,4 +267,37 @@ function runMigrations(db) {
 
     setVersion(5)
   }
+
+  // ── v6: hasNews, colorRating, Setup_CustomTags junction ───────────────────
+  if (version < 6) {
+    try { db.exec(`ALTER TABLE Journals ADD COLUMN hasNews INTEGER NOT NULL DEFAULT 0`) } catch {}
+    try { db.exec(`ALTER TABLE Journals ADD COLUMN colorRating TEXT`) } catch {}
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS Setup_CustomTags (
+        setupId     INTEGER NOT NULL REFERENCES TradeSetups(id) ON DELETE CASCADE,
+        customTagId INTEGER NOT NULL REFERENCES CustomTags(id)  ON DELETE CASCADE,
+        PRIMARY KEY (setupId, customTagId)
+      );
+    `)
+    setVersion(6)
+  }
+
+  // ── v7: RRTypes + Setup_RRTypes junction ──────────────────────────────────
+  if (version < 7) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS RRTypes (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        name      TEXT    NOT NULL UNIQUE,
+        ratio     REAL    NOT NULL,
+        createdAt TEXT    DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS Setup_RRTypes (
+        setupId  INTEGER NOT NULL REFERENCES TradeSetups(id) ON DELETE CASCADE,
+        rrTypeId INTEGER NOT NULL REFERENCES RRTypes(id)     ON DELETE CASCADE,
+        PRIMARY KEY (setupId, rrTypeId)
+      );
+    `)
+    setVersion(7)
+  }
 }
