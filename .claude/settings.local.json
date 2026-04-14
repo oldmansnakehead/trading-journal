@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install better-sqlite3)",
+      "Bash(npx electron-builder install-app-deps)",
+      "Bash(npm run build)"
+    ]
+  }
+}

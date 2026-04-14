@@ -1,0 +1,147 @@
+import { ipcMain } from 'electron'
+import { getDb } from '../database/index.js'
+
+function handle(channel, fn) {
+  ipcMain.removeHandler(channel)
+  ipcMain.handle(channel, fn)
+}
+
+// Shared SELECT for journal rows (includes comma-separated strategy + custom tag names)
+const JOURNAL_SELECT = `
+  SELECT j.*,
+         ts.name AS setupName,
+         GROUP_CONCAT(DISTINCT s.name)  AS strategyNames,
+         GROUP_CONCAT(DISTINCT ct.name) AS customTagNames
+  FROM   Journals j
+  LEFT JOIN TradeSetups ts         ON j.setupId      = ts.id
+  LEFT JOIN Journal_Strategies js  ON j.id           = js.journalId
+  LEFT JOIN Strategies  s          ON js.strategyId  = s.id
+  LEFT JOIN Journal_CustomTags jct ON j.id           = jct.journalId
+  LEFT JOIN CustomTags ct          ON jct.customTagId = ct.id
+`
+
+export function registerJournalHandlers() {
+  const db = getDb()
+
+  // ── Create ────────────────────────────────────────────────────────────────
+
+  handle('journals:create', (_event, data) => {
+    const { strategyIds = [], customTagIds = [], ...rest } = data
+
+    const stmt = db.prepare(`
+      INSERT INTO Journals
+        (entryDateTime, exitDateTime, symbol, session, position, tf,
+         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias)
+      VALUES
+        (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
+         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias)
+    `)
+    const insertLink = db.prepare(
+      'INSERT OR IGNORE INTO Journal_Strategies (journalId, strategyId) VALUES (?, ?)'
+    )
+    const insertTag = db.prepare(
+      'INSERT OR IGNORE INTO Journal_CustomTags (journalId, customTagId) VALUES (?, ?)'
+    )
+
+    const run = db.transaction(() => {
+      const { lastInsertRowid } = stmt.run(rest)
+      for (const sid of strategyIds)  insertLink.run(lastInsertRowid, sid)
+      for (const tid of customTagIds) insertTag.run(lastInsertRowid, tid)
+      return lastInsertRowid
+    })
+
+    const id = run()
+    return db.prepare(`${JOURNAL_SELECT} WHERE j.id = ? GROUP BY j.id`).get(id)
+  })
+
+  // ── Dashboard query with dynamic multi-filters ────────────────────────────
+
+  handle('journals:query', (_event, filters = {}) => {
+    const { sessions = [], rrTypes = [], symbols = [], setupId, strategyId, dateFrom, dateTo } =
+      filters
+
+    const conditions = []
+    const params = []
+
+    if (sessions.length > 0) {
+      conditions.push(`j.session IN (${sessions.map(() => '?').join(',')})`)
+      params.push(...sessions)
+    }
+    if (rrTypes.length > 0) {
+      conditions.push(`j.rrType IN (${rrTypes.map(() => '?').join(',')})`)
+      params.push(...rrTypes)
+    }
+    if (symbols.length > 0) {
+      conditions.push(`j.symbol IN (${symbols.map(() => '?').join(',')})`)
+      params.push(...symbols)
+    }
+    if (setupId) {
+      conditions.push('j.setupId = ?')
+      params.push(setupId)
+    }
+    if (strategyId) {
+      conditions.push('j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId = ?)')
+      params.push(strategyId)
+    }
+    if (dateFrom) {
+      conditions.push('j.entryDateTime >= ?')
+      params.push(dateFrom)
+    }
+    if (dateTo) {
+      conditions.push('j.entryDateTime <= ?')
+      params.push(dateTo)
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    return db
+      .prepare(`${JOURNAL_SELECT} ${where} GROUP BY j.id ORDER BY j.entryDateTime ASC`)
+      .all(...params)
+  })
+
+  // ── Summary stats ─────────────────────────────────────────────────────────
+
+  handle('journals:getSummary', (_event, filters = {}) => {
+    const { sessions = [], rrTypes = [], symbols = [], setupId, strategyId, dateFrom, dateTo } =
+      filters
+
+    const conditions = []
+    const params = []
+    if (sessions.length > 0)   { conditions.push(`session IN (${sessions.map(()=>'?').join(',')})`)  ; params.push(...sessions) }
+    if (rrTypes.length > 0)    { conditions.push(`rrType  IN (${rrTypes.map(()=>'?').join(',')})`)   ; params.push(...rrTypes) }
+    if (symbols.length > 0)    { conditions.push(`symbol  IN (${symbols.map(()=>'?').join(',')})`)   ; params.push(...symbols) }
+    if (setupId)               { conditions.push('setupId = ?')          ; params.push(setupId) }
+    if (strategyId)            { conditions.push('id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId = ?)') ; params.push(strategyId) }
+    if (dateFrom)              { conditions.push('entryDateTime >= ?')   ; params.push(dateFrom) }
+    if (dateTo)                { conditions.push('entryDateTime <= ?')   ; params.push(dateTo) }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    return db.prepare(`
+      SELECT
+        COUNT(*)                                                AS total,
+        SUM(CASE WHEN result = 'Win'       THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN result = 'Loss'      THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN result = 'Breakeven' THEN 1 ELSE 0 END) AS breakevens,
+        ROUND(
+          100.0 * SUM(CASE WHEN result = 'Win' THEN 1 ELSE 0 END) /
+          NULLIF(SUM(CASE WHEN result IN ('Win','Loss') THEN 1 ELSE 0 END), 0)
+        , 2) AS winRate
+      FROM Journals
+      ${where}
+    `).get(...params)
+  })
+
+  // ── Distinct symbols (from journal data) ─────────────────────────────────
+
+  handle('journals:getDistinctSymbols', () =>
+    db.prepare('SELECT DISTINCT symbol FROM Journals ORDER BY symbol').all().map((r) => r.symbol)
+  )
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+
+  handle('journals:delete', (_event, id) => {
+    db.prepare('DELETE FROM Journals WHERE id = ?').run(id)
+    return { ok: true }
+  })
+}
