@@ -24,6 +24,8 @@ const submitMsg          = ref('')
 const submitError        = ref('')
 const isSubmitting       = ref(false)
 const sessionAutoDetected = ref(false)
+const nativeEntryDateRef = ref(null)
+const nativeExitDateRef = ref(null)
 
 const selectedStrategyIds = ref([])
 
@@ -115,6 +117,19 @@ function detectSession(timeStr) {
   return ''
 }
 
+// ── Sorted display lists ─────────────────────────────────────────────────────
+const sortedStrategies = computed(() =>
+  [...strategies.value].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  )
+)
+
+const sortedCustomTags = computed(() =>
+  [...customTags.value].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  )
+)
+
 // ── TP Point auto-calc from SL + RR Type ─────────────────────────────────────
 const tpComputed = computed(() => {
   const sl = parseFloat(form.value.slPoint)
@@ -173,8 +188,7 @@ function parseThaiDisplayDate(displayDate) {
 
   const day = Number(m[1])
   const month = Number(m[2])
-  const buddhistYear = Number(m[3])
-  const year = buddhistYear - 543
+  const year = Number(m[3])
 
   const d = new Date(year, month - 1, day)
   if (
@@ -186,6 +200,33 @@ function parseThaiDisplayDate(displayDate) {
   }
 
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function isoToThaiDisplayDate(isoDate) {
+  if (!isoDate) return ''
+  const m = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return ''
+  return `${m[3]}/${m[2]}/${m[1]}`
+}
+
+function openNativePicker(refEl) {
+  if (!refEl) return
+  if (typeof refEl.showPicker === 'function') {
+    refEl.showPicker()
+    return
+  }
+  refEl.focus()
+  refEl.click()
+}
+
+function pickDate(field, refEl) {
+  const currentIso = parseThaiDisplayDate(form.value[field])
+  if (currentIso) refEl.value = currentIso
+  openNativePicker(refEl)
+}
+
+function onNativeDateChange(field, isoValue) {
+  form.value[field] = isoToThaiDisplayDate(isoValue)
 }
 
 function buildIso(date, time) {
@@ -216,11 +257,11 @@ async function handleSubmit() {
     return
   }
   if (!parseThaiDisplayDate(form.value.entryDate)) {
-    submitError.value = 'รูปแบบวันที่ Entry ต้องเป็น dd/mm/yyyy (พ.ศ.)'
+    submitError.value = 'รูปแบบวันที่ Entry ต้องเป็น dd/mm/yyyy (ค.ศ.)'
     return
   }
   if (form.value.exitDate && !parseThaiDisplayDate(form.value.exitDate)) {
-    submitError.value = 'รูปแบบวันที่ Exit ต้องเป็น dd/mm/yyyy (พ.ศ.)'
+    submitError.value = 'รูปแบบวันที่ Exit ต้องเป็น dd/mm/yyyy (ค.ศ.)'
     return
   }
   if (!form.value.symbol) {
@@ -300,14 +341,31 @@ function resetForm() {
         <div class="form-group datetime-group">
           <label>Entry Date &amp; Time *</label>
           <div class="dt-inputs">
-            <input
-              :value="form.entryDate"
-              type="text"
-              placeholder="dd/mm/yyyy"
-              maxlength="10"
-              required
-              @input="onDateInput('entryDate', $event)"
-            />
+            <div class="date-input-wrap">
+              <input
+                :value="form.entryDate"
+                type="text"
+                placeholder="dd/mm/yyyy"
+                maxlength="10"
+                required
+                @input="onDateInput('entryDate', $event)"
+              />
+              <button
+                type="button"
+                class="date-picker-btn"
+                @click="pickDate('entryDate', nativeEntryDateRef)"
+              >
+                📅
+              </button>
+              <input
+                ref="nativeEntryDateRef"
+                class="native-date-picker"
+                type="date"
+                tabindex="-1"
+                aria-hidden="true"
+                @change="onNativeDateChange('entryDate', $event.target.value)"
+              />
+            </div>
             <input
               :value="form.entryTime"
               type="text" placeholder="HH:MM" maxlength="5"
@@ -320,13 +378,30 @@ function resetForm() {
         <div class="form-group datetime-group">
           <label>Exit Date &amp; Time</label>
           <div class="dt-inputs">
-            <input
-              :value="form.exitDate"
-              type="text"
-              placeholder="dd/mm/yyyy"
-              maxlength="10"
-              @input="onDateInput('exitDate', $event)"
-            />
+            <div class="date-input-wrap">
+              <input
+                :value="form.exitDate"
+                type="text"
+                placeholder="dd/mm/yyyy"
+                maxlength="10"
+                @input="onDateInput('exitDate', $event)"
+              />
+              <button
+                type="button"
+                class="date-picker-btn"
+                @click="pickDate('exitDate', nativeExitDateRef)"
+              >
+                📅
+              </button>
+              <input
+                ref="nativeExitDateRef"
+                class="native-date-picker"
+                type="date"
+                tabindex="-1"
+                aria-hidden="true"
+                @change="onNativeDateChange('exitDate', $event.target.value)"
+              />
+            </div>
             <input
               :value="form.exitTime"
               type="text" placeholder="HH:MM" maxlength="5"
@@ -390,7 +465,7 @@ function resetForm() {
         <label>Strategy * <span class="auto-tag">(multi-select)</span></label>
         <div class="tag-picker">
           <button
-            v-for="s in strategies" :key="s.id"
+            v-for="s in sortedStrategies" :key="s.id"
             type="button"
             class="tag-chip tag-chip--blue"
             :class="{ active: selectedStrategyIds.includes(s.id) }"
@@ -436,7 +511,7 @@ function resetForm() {
         <label>{{ customColumnName }} <span class="auto-tag">(multi-select)</span></label>
         <div class="tag-picker">
           <button
-            v-for="t in customTags" :key="t.id"
+            v-for="t in sortedCustomTags" :key="t.id"
             type="button"
             class="tag-chip"
             :class="{ active: selectedCustomTagIds.includes(t.id) }"
@@ -503,8 +578,30 @@ label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase;
 .auto-tag { font-weight: 400; text-transform: none; color: #4f9cf9; margin-left: 4px; }
 
 .dt-inputs { display: flex; gap: 8px; }
-.dt-inputs input:first-child { flex: 3; min-width: 0; }
+.date-input-wrap { position: relative; flex: 3; min-width: 0; }
+.date-input-wrap > input[type='text'] { width: 100%; padding-right: 38px; }
 .dt-inputs .time-input        { flex: 0 0 72px; text-align: center; letter-spacing: 0.05em; }
+.date-picker-btn {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  padding: 3px 7px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #252525;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.native-date-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 
 .session-select.session-detected { color: #4ade80; border-color: #166534; }
 

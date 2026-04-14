@@ -1,4 +1,4 @@
-import { ipcMain, dialog, app } from 'electron'
+import { ipcMain, dialog, app, shell } from 'electron'
 import { join } from 'path'
 import { writeFileSync, copyFileSync, rmSync } from 'fs'
 import { getDb, closeDb } from '../database/index.js'
@@ -68,5 +68,51 @@ export function registerAppHandlers() {
     app.relaunch()
     app.exit(0)
     return { ok: true }
+  })
+
+  // Open URL in system default browser
+  handle('app:openExternal', (_event, url) => {
+    shell.openExternal(url)
+    return { ok: true }
+  })
+
+  // Fetch URL from main process (no CORS) and extract the actual image URL
+  handle('app:fetchImageUrl', async (_event, url) => {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        },
+        redirect: 'follow'
+      })
+
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.startsWith('image/')) {
+        return { ok: true, imageUrl: url }
+      }
+
+      const html = await res.text()
+
+      // og:image (two attribute orders)
+      const og = html.match(
+        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i
+      ) || html.match(
+        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i
+      )
+      if (og) return { ok: true, imageUrl: og[1] }
+
+      // twitter:image fallback
+      const tw = html.match(
+        /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i
+      ) || html.match(
+        /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image(?::src)?["']/i
+      )
+      if (tw) return { ok: true, imageUrl: tw[1] }
+
+      return { ok: false, imageUrl: null }
+    } catch (e) {
+      return { ok: false, imageUrl: null, error: e.message }
+    }
   })
 }

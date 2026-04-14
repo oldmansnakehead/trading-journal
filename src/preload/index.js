@@ -36,6 +36,8 @@ const api = {
   chooseDbFolder: () => ipcRenderer.invoke('app:chooseDbFolder'),
   exportDb:       () => ipcRenderer.invoke('app:exportDb'),
   importDb:       () => ipcRenderer.invoke('app:importDb'),
+  openExternal:   (url) => ipcRenderer.invoke('app:openExternal', url),
+  fetchImageUrl:  (url) => ipcRenderer.invoke('app:fetchImageUrl', url),
 
   // ── Custom Tags ───────────────────────────────────────────────────────────
   getAllCustomTags: () => ipcRenderer.invoke('customTags:getAll'),
@@ -44,6 +46,7 @@ const api = {
 
   // ── Journal Entries ───────────────────────────────────────────────────────
   createJournal: (data) => ipcRenderer.invoke('journals:create', data),
+  updateJournal: (data) => ipcRenderer.invoke('journals:update', data),
   deleteJournal: (id) => ipcRenderer.invoke('journals:delete', id),
   queryJournals: (filters) => ipcRenderer.invoke('journals:query', filters),
   getJournalSummary: (filters) => ipcRenderer.invoke('journals:getSummary', filters),

@@ -179,6 +179,51 @@ export function registerJournalHandlers() {
     db.prepare('SELECT DISTINCT symbol FROM Journals ORDER BY symbol').all().map((r) => r.symbol)
   )
 
+  // ── Update ────────────────────────────────────────────────────────────────
+
+  handle('journals:update', (_event, data) => {
+    const { id, strategyIds = [], customTagIds = [], imageUrls = [], ...rest } = data
+
+    const updateStmt = db.prepare(`
+      UPDATE Journals SET
+        entryDateTime = @entryDateTime,
+        exitDateTime  = @exitDateTime,
+        symbol        = @symbol,
+        session       = @session,
+        position      = @position,
+        tf            = @tf,
+        rrType        = @rrType,
+        result        = @result,
+        slPoint       = @slPoint,
+        tpPoint       = @tpPoint,
+        notes         = @notes,
+        setupId       = @setupId,
+        directionBias = @directionBias,
+        updatedAt     = datetime('now')
+      WHERE id = @id
+    `)
+    const delStrategies = db.prepare('DELETE FROM Journal_Strategies WHERE journalId = ?')
+    const insStrategy   = db.prepare('INSERT OR IGNORE INTO Journal_Strategies (journalId, strategyId) VALUES (?, ?)')
+    const delTags       = db.prepare('DELETE FROM Journal_CustomTags WHERE journalId = ?')
+    const insTag        = db.prepare('INSERT OR IGNORE INTO Journal_CustomTags (journalId, customTagId) VALUES (?, ?)')
+    const delImages     = db.prepare('DELETE FROM Journal_Images WHERE journalId = ?')
+    const insImage      = db.prepare('INSERT INTO Journal_Images (journalId, url, sortOrder) VALUES (?, ?, ?)')
+
+    db.transaction(() => {
+      const normalizedUrls = imageUrls.map((u) => String(u || '').trim()).filter(Boolean)
+      updateStmt.run({ id, ...rest, imageUrl: normalizedUrls[0] ?? null })
+      delStrategies.run(id)
+      for (const sid of strategyIds) insStrategy.run(id, sid)
+      delTags.run(id)
+      for (const tid of customTagIds) insTag.run(id, tid)
+      delImages.run(id)
+      normalizedUrls.forEach((url, idx) => insImage.run(id, url, idx))
+    })()
+
+    const updated = db.prepare(`${JOURNAL_SELECT} WHERE j.id = ? GROUP BY j.id`).get(id)
+    return withImageUrls([updated])[0]
+  })
+
   // ── Delete ────────────────────────────────────────────────────────────────
 
   handle('journals:delete', (_event, id) => {
