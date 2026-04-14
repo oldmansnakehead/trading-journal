@@ -1,11 +1,13 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 
 const setups = ref([])
 const symbols = ref([])
+const setupRRTypes = ref([])
 
 const selectedSetupId = ref('')
 const selectedSymbol = ref('')
+const selectedRRType = ref('')
 const jsonInput = ref('')
 const importResults = ref([])
 const isImporting = ref(false)
@@ -14,6 +16,16 @@ const message = ref({ text: '', type: '' })
 onMounted(async () => {
   setups.value = await window.api.getAllSetups()
   symbols.value = await window.api.getAllSymbols()
+})
+
+watch(selectedSetupId, async (newId) => {
+  if (newId) {
+    setupRRTypes.value = await window.api.getRRTypesForSetup(Number(newId))
+    selectedRRType.value = ''
+  } else {
+    setupRRTypes.value = []
+    selectedRRType.value = ''
+  }
 })
 
 function parseThaiDate(dateStr, timeStr) {
@@ -72,7 +84,13 @@ async function handleImport() {
         session: item['Session'] || 'N/A',
         position: item['Position'] || 'Buy',
         tf: item['TF'] || 'M1',
+        rrTypeId: Number(selectedRRType.value) || (() => {
+          const n = item['RRR'] ? `Fixed ${item['RRR']}R` : 'Fixed 2R'
+          const matched = setupRRTypes.value.find(x => x.name === n)
+          return matched ? matched.id : null
+        })(),
         rrType: item['RRR'] ? `Fixed ${item['RRR']}R` : 'Fixed 2R',
+
         result: item['Result'] || 'Loss',
         slPoint: parseFloat(item['SL.Point']) || 0,
         tpPoint: parseFloat(item['TP.Point']) || 0,
@@ -129,6 +147,14 @@ function handleFileUpload(e) {
           <select v-model="selectedSymbol" class="custom-select">
             <option value="">Use Symbol from JSON</option>
             <option v-for="s in symbols" :key="s.id" :value="s.name">{{ s.name }}</option>
+          </select>
+        </div>
+
+        <div class="input-group">
+          <label>Overwrite RR Type (Optional)</label>
+          <select v-model="selectedRRType" class="custom-select" :disabled="!selectedSetupId || !setupRRTypes.length">
+            <option value="">{{ !selectedSetupId ? 'Select Setup first' : 'Use JSON or Default 2R' }}</option>
+            <option v-for="r in setupRRTypes" :key="r.id" :value="r.id">{{ r.name }}</option>
           </select>
         </div>
       </div>

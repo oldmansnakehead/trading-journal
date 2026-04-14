@@ -320,6 +320,7 @@ async function handleSubmit() {
       position: form.value.position,
       directionBias: form.value.directionBias,
       tf: form.value.tf,
+      rrTypeId: Number(form.value.rrTypeId),
       rrType: selectedRRType.value?.name ?? '',
       slPoint: form.value.slPoint !== '' ? parseFloat(form.value.slPoint) : null,
       tpPoint: form.value.tpPoint !== '' ? parseFloat(form.value.tpPoint) : null,
@@ -329,6 +330,11 @@ async function handleSubmit() {
       setupId: Number(form.value.setupId),
       hasNews: hasNews.value ? 1 : 0,
       colorRating: colorRating.value || null,
+      // Pass the actual tag names as the timeBos scalar value for the DB column
+      timeBos: selectedCustomTagIds.value
+        .map((id) => customTags.value.find((t) => t.id === id)?.name)
+        .filter(Boolean)
+        .join(',') || null,
       // Convert Vue reactive arrays into plain arrays for Electron IPC structured clone.
       strategyIds: [...selectedStrategyIds.value],
       customTagIds: [...selectedCustomTagIds.value]

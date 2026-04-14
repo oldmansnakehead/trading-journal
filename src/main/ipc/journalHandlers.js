@@ -10,10 +10,13 @@ function handle(channel, fn) {
 const JOURNAL_SELECT = `
   SELECT j.*,
          ts.name AS setupName,
+         rt.name AS rrTypeName,
+         rt.ratio AS rrTypeRatio,
          GROUP_CONCAT(DISTINCT s.name)  AS strategyNames,
          GROUP_CONCAT(DISTINCT ct.name) AS customTagNames
   FROM   Journals j
   LEFT JOIN TradeSetups ts         ON j.setupId      = ts.id
+  LEFT JOIN RRTypes rt             ON j.rrTypeId     = rt.id
   LEFT JOIN Journal_Strategies js  ON j.id           = js.journalId
   LEFT JOIN Strategies  s          ON js.strategyId  = s.id
   LEFT JOIN Journal_CustomTags jct ON j.id           = jct.journalId
@@ -57,10 +60,10 @@ export function registerJournalHandlers() {
     const stmt = db.prepare(`
       INSERT INTO Journals
         (entryDateTime, exitDateTime, symbol, session, position, tf,
-         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
+         rrType, rrTypeId, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
       VALUES
         (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
-         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
+         @rrType, @rrTypeId, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
     `)
     const insertLink = db.prepare(
       'INSERT OR IGNORE INTO Journal_Strategies (journalId, strategyId) VALUES (?, ?)'
@@ -78,6 +81,7 @@ export function registerJournalHandlers() {
         .filter(Boolean)
       const payload = {
         ...rest,
+        timeBos: rest.timeBos ?? null,
         imageUrl: normalizedImageUrls[0] ?? null
       }
       const { lastInsertRowid } = stmt.run(payload)
@@ -100,10 +104,10 @@ export function registerJournalHandlers() {
     const stmt = db.prepare(`
       INSERT INTO Journals
         (entryDateTime, exitDateTime, symbol, session, position, tf,
-         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
+         rrType, rrTypeId, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
       VALUES
         (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
-         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
+         @rrType, @rrTypeId, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
     `)
     const insertImage = db.prepare('INSERT INTO Journal_Images (journalId, url, sortOrder) VALUES (?, ?, ?)')
     const getTagStmt = db.prepare('SELECT id FROM CustomTags WHERE name = ?')
@@ -261,6 +265,7 @@ export function registerJournalHandlers() {
         position      = @position,
         tf            = @tf,
         rrType        = @rrType,
+        rrTypeId      = @rrTypeId,
         result        = @result,
         slPoint       = @slPoint,
         tpPoint       = @tpPoint,
@@ -282,7 +287,7 @@ export function registerJournalHandlers() {
 
     db.transaction(() => {
       const normalizedUrls = imageUrls.map((u) => String(u || '').trim()).filter(Boolean)
-      updateStmt.run({ id, ...rest, imageUrl: normalizedUrls[0] ?? null })
+      updateStmt.run({ id, ...rest, timeBos: rest.timeBos ?? null, imageUrl: normalizedUrls[0] ?? null })
       delStrategies.run(id)
       for (const sid of strategyIds) insStrategy.run(id, sid)
       delTags.run(id)

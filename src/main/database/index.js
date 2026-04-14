@@ -48,6 +48,7 @@ function runMigrations(db) {
 
   const version = getVersion()
 
+
   // ── v1: Initial schema (fresh install) ────────────────────────────────────
   if (version < 1) {
     db.exec(`
@@ -102,7 +103,6 @@ function runMigrations(db) {
       CREATE INDEX IF NOT EXISTS idx_journals_rrType        ON Journals(rrType);
     `)
     setVersion(1)
-    return
   }
 
   // ── v2: Add Symbols, Journal_Strategies, new Journals columns ─────────────
@@ -299,5 +299,31 @@ function runMigrations(db) {
       );
     `)
     setVersion(7)
+  }
+
+  // ── v8: rrTypeId for native Relational binding ─────────────────────────────
+  if (version < 8) {
+    db.exec(`
+      ALTER TABLE Journals ADD COLUMN rrTypeId INTEGER REFERENCES RRTypes(id);
+      UPDATE Journals SET rrTypeId = (SELECT id FROM RRTypes WHERE RRTypes.name = Journals.rrType LIMIT 1);
+    `)
+    setVersion(8)
+  }
+
+  // ── v9: Safety patch for corrupted junction tables ──────────────────────────
+  if (version < 9) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS Setup_CustomTags (
+        setupId     INTEGER NOT NULL REFERENCES TradeSetups(id) ON DELETE CASCADE,
+        customTagId INTEGER NOT NULL REFERENCES CustomTags(id)  ON DELETE CASCADE,
+        PRIMARY KEY (setupId, customTagId)
+      );
+      CREATE TABLE IF NOT EXISTS Setup_RRTypes (
+        setupId  INTEGER NOT NULL REFERENCES TradeSetups(id) ON DELETE CASCADE,
+        rrTypeId INTEGER NOT NULL REFERENCES RRTypes(id)     ON DELETE CASCADE,
+        PRIMARY KEY (setupId, rrTypeId)
+      );
+    `)
+    setVersion(9)
   }
 }

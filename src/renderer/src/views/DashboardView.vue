@@ -146,15 +146,15 @@ async function saveSettings() {
 watch([initialBalance, riskPercent], saveSettings)
 
 // ── RR Helpers ────────────────────────────────────────────────────────────────
-function parseRR(rrType) {
+function parseRRLegacy(rrTypeStr) {
   // Supports "1:2" or "Fixed 2R" or just "2"
-  const m = rrType?.match(/(?:1:)?(\d+(?:\.\d+)?)/)
+  const m = rrTypeStr?.match(/(?:1:)?(\d+(?:\.\d+)?)/)
   return m ? Number(m[1]) : 0
 }
 
-// Returns { risk, reward, rrr } based on result and rrType
-function calcRRR(result, rrType) {
-  const rr = parseRR(rrType)
+// Returns { risk, reward, rrr } based on ratio or legacy string
+function calcRRR(result, rrTypeRatio, legacyRrTypeStr) {
+  const rr = rrTypeRatio != null ? parseFloat(rrTypeRatio) : parseRRLegacy(legacyRrTypeStr)
   if (result === 'Win') return { risk: 0, reward: rr, rrr: rr }
   if (result === 'Loss') return { risk: -1, reward: 0, rrr: -1 }
   return { risk: 0, reward: 0, rrr: 0 } // Breakeven
@@ -163,22 +163,27 @@ function calcRRR(result, rrType) {
 // ── Computed table rows with running balance/drawdown ─────────────────────────
 const enrichedRows = computed(() => {
   const bal0 = initialBalance.value
-  const riskPct = riskPercent.value / 100
-  const riskAmt = bal0 * riskPct // Standard fixed risk amount
+  const baseRiskPct = riskPercent.value / 100
   let runningBalance = bal0
   let peakBalance = bal0
   let cumLogReturn = 0
+  let currentConsecutiveLosses = 0
 
   return results.value.map((row, i) => {
-    const { risk, reward, rrr } = calcRRR(row.result, row.rrType)
+    const { risk, reward, rrr } = calcRRR(row.result, row.rrTypeRatio, row.rrType)
+
+    // Auto-Reduce Risk Logic: Reduce to 0.5% if 3 consecutive losses
+    let appliedRiskPct = baseRiskPct
+    if (currentConsecutiveLosses >= 3) {
+      appliedRiskPct = 0.5 / 100 // Temporary 0.5% risk
+    }
+    const appliedRiskAmt = bal0 * appliedRiskPct
 
     // 1. Simple PnL (Fixed $ risk)
-    const simpleDollarPnl = +(rrr * riskAmt).toFixed(2)
+    const simpleDollarPnl = +(rrr * appliedRiskAmt).toFixed(2)
 
     // 2. Log PnL (Compounding)
-    // Risk per trade as fractional (e.g. 0.01 for 1%)
-    // Reward multiplier is rrr
-    const tradePctReturn = rrr * riskPct // e.g. 2RR * 0.01 = 0.02 (2%)
+    const tradePctReturn = rrr * appliedRiskPct
     const logTradeReturn = Math.log(1 + tradePctReturn)
     cumLogReturn += logTradeReturn
 
@@ -186,13 +191,17 @@ const enrichedRows = computed(() => {
     let dollarPnl, currentBalance
     if (returnType.value === 'log') {
       currentBalance = +(bal0 * Math.exp(cumLogReturn)).toFixed(2)
-      // The "dollar PnL" for this specific trade in log mode is the change in balance
-      const prevBal = i === 0 ? bal0 : 0 // will be calculated below
-      // Actually simpler:
       dollarPnl = +(currentBalance - runningBalance).toFixed(2)
     } else {
       dollarPnl = simpleDollarPnl
       currentBalance = +(runningBalance + dollarPnl).toFixed(2)
+    }
+
+    // Update consecutive losses state for the next trade
+    if (row.result === 'Loss') {
+      currentConsecutiveLosses++
+    } else if (row.result === 'Win') {
+      currentConsecutiveLosses = 0
     }
 
     runningBalance = currentBalance
@@ -237,7 +246,7 @@ const enhancedSummary = computed(() => {
   const profitFactor = grossLoss > 0 ? +(grossProfit / grossLoss).toFixed(2) : '∞'
   const avgWin = wins.length ? +(grossProfit / wins.length).toFixed(2) : 0
   const avgLoss = losses.length ? +(grossLoss / losses.length).toFixed(2) : 0
-  const avgRR = rows.length ? +(rows.reduce((s, r) => s + r.rrr, 0) / rows.length).toFixed(2) : 0
+  const avgRR = avgLoss !== 0 ? +(Math.abs(avgWin) / Math.abs(avgLoss)).toFixed(2) : (avgWin !== 0 ? '∞' : 0)
 
   // Consecutive wins/losses
   let maxConsecWin = 0,
@@ -281,14 +290,15 @@ const enhancedSummary = computed(() => {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(async () => {
   await loadSettings()
-  const [s, sym, rr] = await Promise.all([
+  const [s, sym, rrTypesList] = await Promise.all([
     window.api.getAllSetups(),
     window.api.getDistinctSymbols(),
     window.api.getAllRRTypes()
   ])
   setups.value = s
   symbolOptions.value = sym
-  rrTypeOptions.value = rr.map((r) => r.name)
+  rrTypeOptions.value = rrTypesList.map((r) => r.name)
+  sessionOptions.value = ALL_SESSIONS
 })
 onActivated(runQuery)
 
@@ -409,12 +419,20 @@ async function runQuery() {
       dateFrom: isoFrom ? `${isoFrom}T00:00` : null,
       dateTo: isoTo ? `${isoTo}T23:59` : null
     }
-    const [rows, stat] = await Promise.all([
+    const [rows, stat, allRRTypes] = await Promise.all([
       window.api.queryJournals(f),
-      window.api.getJournalSummary(f)
+      window.api.getJournalSummary(f),
+      window.api.getAllRRTypes()
     ])
     results.value = rows
     summary.value = stat
+    
+    // Inject legacy combinations of RR Types securely to support historical DB mappings:
+    rrTypeOptions.value = Array.from(new Set([
+      ...allRRTypes.map(r => r.name), 
+      ...rows.map(r => r.rrTypeName || r.rrType).filter(Boolean)
+    ]))
+
   } catch (e) {
     loadError.value = e.message ?? 'โหลดข้อมูลไม่สำเร็จ'
   } finally {
@@ -567,7 +585,7 @@ function updatePnlChart(rows) {
     } else if (pnlGroupBy.value === 'session') {
       key = r.session || 'N/A'
     } else if (pnlGroupBy.value === 'rrType') {
-      key = r.rrType || 'N/A'
+      key = r.rrTypeName || r.rrType || 'N/A'
     } else if (pnlGroupBy.value === 'rating') {
       key = r.colorRating ? r.colorRating.toUpperCase() : 'NONE'
     } else if (pnlGroupBy.value === 'news') {
@@ -699,6 +717,7 @@ const sortedEditCustomTags = computed(() =>
 )
 
 // ── Edit Modal ────────────────────────────────────────────────────────────────
+const editRRTypes = ref([])
 async function openEdit(row) {
   editError.value = ''
   editRow.value = row
@@ -715,6 +734,7 @@ async function openEdit(row) {
     directionBias: row.directionBias ?? 'Bullish',
     setupId: String(row.setupId ?? ''),
     tf: row.tf ?? 'M1',
+    rrTypeId: row.rrTypeId != null ? String(row.rrTypeId) : '',
     rrType: row.rrType ?? 'RR 1:2',
     slPoint: row.slPoint != null ? String(row.slPoint) : '',
     tpPoint: row.tpPoint != null ? String(row.tpPoint) : '',
@@ -728,13 +748,16 @@ async function openEdit(row) {
   editSelectedCustomTagIds.value = []
   editStrategies.value = []
   editAllCustomTags.value = []
+  editRRTypes.value = []
 
-  const [strats, tags] = await Promise.all([
+  const [strats, tags, rrTypes] = await Promise.all([
     row.setupId ? window.api.getStrategiesForSetup(Number(row.setupId)) : Promise.resolve([]),
-    row.setupId ? window.api.getCustomTagsForSetup(Number(row.setupId)) : Promise.resolve([])
+    row.setupId ? window.api.getCustomTagsForSetup(Number(row.setupId)) : Promise.resolve([]),
+    row.setupId ? window.api.getRRTypesForSetup(Number(row.setupId)) : Promise.resolve([])
   ])
   editStrategies.value = strats
   editAllCustomTags.value = tags
+  editRRTypes.value = rrTypes
 
   if (strats.length && row.strategyNames) {
     const names = row.strategyNames.split(',').map((n) => n.trim())
@@ -752,10 +775,12 @@ async function onEditSetupChange() {
   editSelectedCustomTagIds.value = []
   editStrategies.value = []
   editAllCustomTags.value = []
+  editRRTypes.value = []
   if (editForm.value.setupId) {
-    ;[editStrategies.value, editAllCustomTags.value] = await Promise.all([
+    ;[editStrategies.value, editAllCustomTags.value, editRRTypes.value] = await Promise.all([
       window.api.getStrategiesForSetup(Number(editForm.value.setupId)),
-      window.api.getCustomTagsForSetup(Number(editForm.value.setupId))
+      window.api.getCustomTagsForSetup(Number(editForm.value.setupId)),
+      window.api.getRRTypesForSetup(Number(editForm.value.setupId))
     ])
   }
 }
@@ -824,7 +849,8 @@ async function saveEdit() {
       position: editForm.value.position,
       directionBias: editForm.value.directionBias,
       tf: editForm.value.tf,
-      rrType: editForm.value.rrType,
+      rrTypeId: editForm.value.rrTypeId ? Number(editForm.value.rrTypeId) : null,
+      rrType: editForm.value.rrType, 
       slPoint: editForm.value.slPoint !== '' ? parseFloat(editForm.value.slPoint) : null,
       tpPoint: editForm.value.tpPoint !== '' ? parseFloat(editForm.value.tpPoint) : null,
       result: editForm.value.result,
@@ -832,6 +858,10 @@ async function saveEdit() {
       setupId: Number(editForm.value.setupId),
       hasNews: editForm.value.hasNews ? 1 : 0,
       colorRating: editForm.value.colorRating || null,
+      timeBos: editSelectedCustomTagIds.value
+        .map((id) => editAllCustomTags.value.find((t) => t.id === id)?.name)
+        .filter(Boolean)
+        .join(',') || null,
       strategyIds: [...editSelectedStrategyIds.value],
       customTagIds: [...editSelectedCustomTagIds.value],
       imageUrls
@@ -893,6 +923,13 @@ async function fetchGalleryImage(url) {
   }
 }
 
+const handleGalleryKeydown = (e) => {
+  if (!showGallery.value) return
+  if (e.key === 'ArrowLeft') galleryPrev()
+  else if (e.key === 'ArrowRight') galleryNext()
+  else if (e.key === 'Escape') closeGallery()
+}
+
 function openGallery(imageUrls) {
   if (!imageUrls?.length) return
   galleryImages.value = imageUrls
@@ -901,11 +938,17 @@ function openGallery(imageUrls) {
   showGallery.value = true
   // Pre-fetch all images
   for (const url of imageUrls) fetchGalleryImage(url)
+  window.addEventListener('keydown', handleGalleryKeydown)
 }
 function closeGallery() {
   showGallery.value = false
   isFullView.value = false
+  window.removeEventListener('keydown', handleGalleryKeydown)
 }
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGalleryKeydown)
+})
 function toggleFullView() {
   isFullView.value = !isFullView.value
 }
@@ -1498,8 +1541,9 @@ function openInBrowser(url) {
           <div class="edit-row">
             <div class="edit-group">
               <label>RR Type</label>
-              <select v-model="editForm.rrType">
-                <option v-for="r in ALL_RR_TYPES" :key="r" :value="r">{{ r }}</option>
+              <select v-model="editForm.rrTypeId">
+                <option value="" disabled>{{ !editForm.setupId ? 'Select Setup first' : 'Select RR Type' }}</option>
+                <option v-for="r in editRRTypes" :key="r.id" :value="String(r.id)">{{ r.name }}</option>
               </select>
             </div>
             <div class="edit-group">
