@@ -60,10 +60,10 @@ export function registerJournalHandlers() {
     const stmt = db.prepare(`
       INSERT INTO Journals
         (entryDateTime, exitDateTime, symbol, session, position, tf,
-         rrType, rrTypeId, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
+         rrType, rrTypeId, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos, isTest, isExcluded)
       VALUES
         (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
-         @rrType, @rrTypeId, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
+         @rrType, @rrTypeId, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos, @isTest, @isExcluded)
     `)
     const insertLink = db.prepare(
       'INSERT OR IGNORE INTO Journal_Strategies (journalId, strategyId) VALUES (?, ?)'
@@ -82,7 +82,9 @@ export function registerJournalHandlers() {
       const payload = {
         ...rest,
         timeBos: rest.timeBos ?? null,
-        imageUrl: normalizedImageUrls[0] ?? null
+        imageUrl: normalizedImageUrls[0] ?? null,
+        isTest: rest.isTest ? 1 : 0,
+        isExcluded: rest.isExcluded ? 1 : 0
       }
       const { lastInsertRowid } = stmt.run(payload)
       for (const sid of strategyIds)  insertLink.run(lastInsertRowid, sid)
@@ -104,10 +106,10 @@ export function registerJournalHandlers() {
     const stmt = db.prepare(`
       INSERT INTO Journals
         (entryDateTime, exitDateTime, symbol, session, position, tf,
-         rrType, rrTypeId, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
+         rrType, rrTypeId, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos, isTest, isExcluded)
       VALUES
         (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
-         @rrType, @rrTypeId, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
+         @rrType, @rrTypeId, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos, @isTest, @isExcluded)
     `)
     const insertImage = db.prepare('INSERT INTO Journal_Images (journalId, url, sortOrder) VALUES (?, ?, ?)')
     const getTagStmt = db.prepare('SELECT id FROM CustomTags WHERE name = ?')
@@ -118,9 +120,9 @@ export function registerJournalHandlers() {
     const runBulk = db.transaction((rows) => {
       let count = 0
       for (const row of rows) {
-        const { imageUrls = [], timeBos, setupId, ...rest } = row
+        const { imageUrls = [], timeBos, setupId, isTest, isExcluded, ...rest } = row
         const normalizedImageUrls = imageUrls.map(url => String(url || '').trim()).filter(Boolean)
-        const payload = { ...rest, timeBos, setupId, imageUrl: normalizedImageUrls[0] ?? null }
+        const payload = { ...rest, timeBos, setupId, isTest: isTest ? 1 : 0, isExcluded: isExcluded ? 1 : 0, imageUrl: normalizedImageUrls[0] ?? null }
         
         const { lastInsertRowid } = stmt.run(payload)
         
@@ -158,6 +160,7 @@ export function registerJournalHandlers() {
     const {
       sessions = [],
       rrTypes = [],
+      rrTypeIds = [],
       symbols = [],
       setupId,
       strategyId,
@@ -178,6 +181,10 @@ export function registerJournalHandlers() {
     if (rrTypes.length > 0) {
       conditions.push(`j.rrType IN (${rrTypes.map(() => '?').join(',')})`)
       params.push(...rrTypes)
+    }
+    if (rrTypeIds.length > 0) {
+      conditions.push(`j.rrTypeId IN (${rrTypeIds.map(() => '?').join(',')})`)
+      params.push(...rrTypeIds)
     }
     if (symbols.length > 0) {
       conditions.push(`j.symbol IN (${symbols.map(() => '?').join(',')})`)
@@ -275,6 +282,8 @@ export function registerJournalHandlers() {
         hasNews       = @hasNews,
         colorRating   = @colorRating,
         timeBos       = @timeBos,
+        isTest        = @isTest,
+        isExcluded    = @isExcluded,
         updatedAt     = datetime('now')
       WHERE id = @id
     `)
@@ -287,7 +296,14 @@ export function registerJournalHandlers() {
 
     db.transaction(() => {
       const normalizedUrls = imageUrls.map((u) => String(u || '').trim()).filter(Boolean)
-      updateStmt.run({ id, ...rest, timeBos: rest.timeBos ?? null, imageUrl: normalizedUrls[0] ?? null })
+      updateStmt.run({ 
+        id, 
+        ...rest, 
+        timeBos: rest.timeBos ?? null, 
+        imageUrl: normalizedUrls[0] ?? null,
+        isTest: rest.isTest ? 1 : 0,
+        isExcluded: rest.isExcluded ? 1 : 0
+      })
       delStrategies.run(id)
       for (const sid of strategyIds) insStrategy.run(id, sid)
       delTags.run(id)

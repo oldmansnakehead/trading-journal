@@ -30,15 +30,19 @@ watch(selectedSetupId, async (newId) => {
 
 function parseThaiDate(dateStr, timeStr) {
   if (!dateStr || !timeStr) return null
-  // Format: DD/MM/YYYY (Thai/UK)
-  const parts = dateStr.split('/')
+  
+  // Ensure we are working with strings
+  const dStr = String(dateStr)
+  const tStr = String(timeStr)
+
+  const parts = dStr.split('/')
   if (parts.length !== 3) return null
   
   const d = parseInt(parts[0], 10)
   const m = parseInt(parts[1], 10) - 1
   const y = parseInt(parts[2], 10)
   
-  const timeParts = timeStr.split(':')
+  const timeParts = tStr.split(':')
   if (timeParts.length !== 2) return null
   const hh = parseInt(timeParts[0], 10)
   const mm = parseInt(timeParts[1], 10)
@@ -219,18 +223,18 @@ function handleFileUpload(e) {
   margin: 0 auto;
 }
 .header-row { margin-bottom: 24px; }
-.view-title { font-size: 1.6rem; color: #fff; margin-bottom: 4px; }
-.subtitle { color: #666; font-size: 0.9rem; }
+.view-title { font-size: 1.6rem; color: var(--text-1); margin-bottom: 4px; }
+.subtitle { color: var(--text-3); font-size: 0.9rem; }
 
 .import-card {
-  background: #161616;
-  border: 1px solid #222;
+  background: var(--bg-mute);
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 20px;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.2);
 }
 
 .config-grid {
@@ -240,30 +244,30 @@ function handleFileUpload(e) {
 }
 
 .input-group { display: flex; flex-direction: column; gap: 8px; }
-.input-group label { font-size: 0.85rem; color: #aaa; font-weight: 500; }
+.input-group label { font-size: 0.85rem; color: var(--text-2); font-weight: 500; }
 
 .custom-select, .custom-textarea {
-  background: #0f0f0f;
-  border: 1px solid #333;
-  color: #fff;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  color: var(--text-1);
   border-radius: 8px;
   padding: 10px 12px;
   font-family: inherit;
   outline: none;
   transition: border-color 0.2s;
 }
-.custom-select:focus, .custom-textarea:focus { border-color: #3b82f6; }
+.custom-select:focus, .custom-textarea:focus { border-color: var(--accent); }
 
 .json-area { display: flex; flex-direction: column; gap: 10px; }
 .flex-between { display: flex; justify-content: space-between; align-items: center; }
-.flex-between label { font-size: 0.85rem; color: #aaa; }
-.file-input { font-size: 0.75rem; color: #666; }
+.flex-between label { font-size: 0.85rem; color: var(--text-2); }
+.file-input { font-size: 0.75rem; color: var(--text-3); }
 
 .custom-textarea { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; line-height: 1.5; }
 
 .action-row { display: flex; justify-content: center; margin-top: 10px; }
 .btn-primary {
-  background: #2563eb;
+  background: var(--accent);
   color: #fff;
   border: none;
   padding: 12px 32px;
@@ -272,19 +276,19 @@ function handleFileUpload(e) {
   cursor: pointer;
   transition: all 0.2s;
 }
-.btn-primary:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); }
-.btn-primary:disabled { background: #333; color: #666; cursor: not-allowed; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); }
+.btn-primary:disabled { background: var(--bg-hover); color: var(--text-3); cursor: not-allowed; }
 
 .alert { padding: 12px 16px; border-radius: 8px; font-size: 0.9rem; }
 .alert.success { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); }
 .alert.error { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
-.alert.info { background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
+.alert.info { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border); }
 
 .help-section { margin-top: 40px; }
-.help-section h4 { color: #444; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 1px; margin-bottom: 12px; }
+.help-section h4 { color: var(--text-3); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 1px; margin-bottom: 12px; }
 
-.mapping-table-wrapper { background: #111; border-radius: 12px; border: 1px solid #222; overflow: hidden; }
+.mapping-table-wrapper { background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
 .mapping-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.8rem; }
-.mapping-table th { background: #1a1a1a; padding: 12px; color: #777; font-weight: 600; }
-.mapping-table td { padding: 12px; border-top: 1px solid #222; color: #999; }
+.mapping-table th { background: var(--bg-mute); padding: 12px; color: var(--text-3); font-weight: 600; }
+.mapping-table td { padding: 12px; border-top: 1px solid var(--border); color: var(--text-2); }
 </style>

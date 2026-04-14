@@ -740,8 +740,8 @@ function flashError(e) {
   gap: 20px;
 }
 .card {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-mute);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 20px;
 }
@@ -763,15 +763,15 @@ function flashError(e) {
 .mini-form input,
 .mini-form select {
   padding: 7px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #252525;
-  color: #e0e0e0;
+  background: var(--bg-input);
+  color: var(--text-1);
   font-size: 0.88rem;
 }
 .mini-form button {
   padding: 8px;
-  background: #4f9cf9;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -792,24 +792,24 @@ function flashError(e) {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  background: #252525;
+  background: var(--bg-input);
   border-radius: 6px;
   padding: 8px 12px;
 }
 .item-list .sub {
   display: block;
   font-size: 0.78rem;
-  color: #777;
+  color: var(--text-3);
   margin-top: 2px;
 }
 .item-list .empty {
-  color: #555;
+  color: var(--text-3);
   font-size: 0.88rem;
 }
 .btn-del {
   background: none;
   border: none;
-  color: #555;
+  color: var(--text-3);
   cursor: pointer;
   font-size: 0.9rem;
   padding: 0 4px;
@@ -820,7 +820,7 @@ function flashError(e) {
 
 .hint {
   font-size: 0.82rem;
-  color: #666;
+  color: var(--text-3);
   margin-bottom: 14px;
   line-height: 1.5;
 }
@@ -831,7 +831,7 @@ function flashError(e) {
 .link-title {
   font-size: 0.82rem;
   font-weight: 700;
-  color: #888;
+  color: var(--text-2);
   margin-bottom: 6px;
 }
 .link-chips {
@@ -843,8 +843,8 @@ function flashError(e) {
   display: flex;
   align-items: center;
   gap: 4px;
-  background: #1e3a5f;
-  color: #7fb3f5;
+  background: var(--accent-bg);
+  color: var(--text-active);
   border-radius: 12px;
   padding: 3px 10px;
   font-size: 0.82rem;
@@ -852,18 +852,18 @@ function flashError(e) {
 .link-chip button {
   background: none;
   border: none;
-  color: #7fb3f5;
+  color: var(--text-active);
   cursor: pointer;
   font-size: 1rem;
   padding: 0;
   line-height: 1;
 }
 .link-chip--green {
-  background: #052e16;
-  color: #4ade80;
+  background: var(--win-bg);
+  color: var(--win-text);
 }
 .link-chip--green button {
-  color: #4ade80;
+  color: var(--win-text);
 }
 
 /* Session time range section */
@@ -877,10 +877,10 @@ function flashError(e) {
 .sess-form-row select,
 .sess-form-row input {
   padding: 7px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #252525;
-  color: #e0e0e0;
+  background: var(--bg-input);
+  color: var(--text-1);
   font-size: 0.88rem;
 }
 .sess-form-row .time-in {
@@ -888,11 +888,11 @@ function flashError(e) {
   text-align: center;
 }
 .sess-form-row .dash {
-  color: #666;
+  color: var(--text-3);
 }
 .sess-form-row button {
   padding: 8px 14px;
-  background: #4f9cf9;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -914,22 +914,22 @@ function flashError(e) {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: #252525;
+  background: var(--bg-input);
   border-radius: 6px;
   padding: 8px 12px;
 }
 .sess-name {
   font-weight: 600;
-  color: #7fb3f5;
+  color: var(--text-active);
   min-width: 90px;
 }
 .sess-time {
   font-size: 0.88rem;
-  color: #ccc;
+  color: var(--text-2);
   flex: 1;
 }
 .empty {
-  color: #555;
+  color: var(--text-3);
   font-size: 0.88rem;
 }
 
@@ -945,32 +945,32 @@ function flashError(e) {
   gap: 8px;
   padding: 6px 10px;
   border-radius: 6px;
-  background: #252525;
+  background: var(--bg-input);
   cursor: pointer;
   font-size: 0.88rem;
-  color: #e0e0e0;
+  color: var(--text-1);
   user-select: none;
 }
 .check-item:hover {
-  background: #2e2e2e;
+  background: var(--bg-hover);
 }
 .check-item input[type='checkbox'] {
-  accent-color: #4f9cf9;
+  accent-color: var(--accent);
   width: 15px;
   height: 15px;
   cursor: pointer;
   flex-shrink: 0;
 }
 .check-all {
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border-soft);
   border-radius: 6px 6px 0 0;
   font-weight: 600;
-  color: #aaa;
+  color: var(--text-2);
 }
 .btn-save {
   margin-top: 6px;
   padding: 8px;
-  background: #4f9cf9;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -1003,15 +1003,15 @@ function flashError(e) {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
 }
 .modal-box {
-  background: #1e1e1e;
-  border: 1px solid #333;
+  background: var(--bg-modal);
+  border: 1px solid var(--border-soft);
   border-radius: 12px;
   padding: 28px 32px;
   min-width: 320px;
@@ -1021,7 +1021,7 @@ function flashError(e) {
 .modal-msg {
   margin: 0 0 22px;
   font-size: 0.95rem;
-  color: #e0e0e0;
+  color: var(--text-1);
   line-height: 1.6;
 }
 .modal-actions {
@@ -1040,9 +1040,9 @@ function flashError(e) {
 }
 .modal-btn:hover { opacity: 0.85; }
 .modal-btn--cancel {
-  background: #2e2e2e;
-  color: #aaa;
-  border: 1px solid #444;
+  background: var(--bg-hover);
+  color: var(--text-2);
+  border: 1px solid var(--border-soft);
 }
 .modal-btn--confirm {
   background: #7f1d1d;

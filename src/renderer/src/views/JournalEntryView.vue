@@ -46,7 +46,9 @@ const form = ref({
   slPoint: '',
   tpPoint: '',
   result: 'Win',
-  notes: ''
+  notes: '',
+  isTest: false,
+  isExcluded: false
 })
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -335,9 +337,9 @@ async function handleSubmit() {
         .map((id) => customTags.value.find((t) => t.id === id)?.name)
         .filter(Boolean)
         .join(',') || null,
-      // Convert Vue reactive arrays into plain arrays for Electron IPC structured clone.
-      strategyIds: [...selectedStrategyIds.value],
-      customTagIds: [...selectedCustomTagIds.value]
+      customTagIds: [...selectedCustomTagIds.value],
+      isTest: form.value.isTest,
+      isExcluded: form.value.isExcluded
     })
 
     submitMsg.value = 'บันทึกการเทรดเรียบร้อย! (ฟอร์มคงค่าเดิมไว้)'
@@ -361,10 +363,10 @@ function resetForm() {
     setupId: '',
     tf: 'M1',
     rrTypeId: '',
-    slPoint: '',
-    tpPoint: '',
     result: 'Win',
-    notes: ''
+    notes: '',
+    isTest: false,
+    isExcluded: false
   }
   selectedStrategyIds.value = []
   strategies.value = []
@@ -581,7 +583,7 @@ function resetForm() {
         </div>
       </div>
 
-      <!-- Row 5: Result + News + Color Rating -->
+      <!-- Row 5: Result + News + Color Rating + Test Item -->
       <div class="form-row">
         <div class="form-group">
           <label>Result *</label>
@@ -600,21 +602,29 @@ function resetForm() {
           <label>ระดับสี (Quality)</label>
           <div class="color-picker">
             <button
-              v-for="c in [
-                ['red', 'แดง'],
-                ['orange', 'ส้ม'],
-                ['yellow', 'เหลือง'],
-                ['green', 'เขียว']
-              ]"
-              :key="c[0]"
+              v-for="c in ['red', 'orange', 'yellow', 'green']"
+              :key="c"
               type="button"
               class="color-chip"
-              :class="[`color-chip--${c[0]}`, { active: colorRating === c[0] }]"
-              @click="colorRating = colorRating === c[0] ? '' : c[0]"
-            >
-              {{ c[1] }}
-            </button>
+              :class="[`color-chip--${c}`, { active: colorRating === c }]"
+              @click="colorRating = colorRating === c ? '' : c"
+              :title="c"
+            ></button>
           </div>
+        </div>
+        <div class="form-group">
+          <label>รายการทดสอบ</label>
+          <label class="checkbox-field">
+            <input v-model="form.isTest" type="checkbox" />
+            <span>{{ form.isTest ? 'เป็นรายการทดสอบ' : 'รายการจริง' }}</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>รายการไม่นับรวม</label>
+          <label class="checkbox-field">
+            <input v-model="form.isExcluded" type="checkbox" />
+            <span>{{ form.isExcluded ? 'ไม่นับรวมสถิติ' : 'นับรวมสถิติปกติ' }}</span>
+          </label>
         </div>
       </div>
 
@@ -726,12 +736,12 @@ label {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #888;
+  color: var(--text-3);
 }
 .auto-tag {
   font-weight: 400;
   text-transform: none;
-  color: #4f9cf9;
+  color: var(--accent);
   margin-left: 4px;
 }
 
@@ -759,10 +769,10 @@ label {
   right: 6px;
   transform: translateY(-50%);
   padding: 3px 7px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #252525;
-  color: #ccc;
+  background: var(--bg-input);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 0.85rem;
   line-height: 1;
@@ -776,18 +786,18 @@ label {
 }
 
 .session-select.session-detected {
-  color: #4ade80;
-  border-color: #166534;
+  color: var(--pos-text);
+  border-color: var(--win-border);
 }
 
 input,
 select,
 textarea {
   padding: 8px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #1e1e1e;
-  color: #e0e0e0;
+  background: var(--bg-mute);
+  color: var(--text-1);
   font-size: 0.9rem;
   transition: border-color 0.2s;
 }
@@ -795,7 +805,7 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: #4f9cf9;
+  border-color: var(--accent);
 }
 input:disabled,
 select:disabled {
@@ -807,10 +817,10 @@ textarea {
 }
 
 .hint-box {
-  background: #1a1200;
-  border: 1px solid #554400;
+  background: var(--bg-mute);
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  color: #facc15;
+  color: var(--breakeven-text);
   font-size: 0.84rem;
   padding: 10px 14px;
 }
@@ -823,7 +833,7 @@ textarea {
 }
 button {
   padding: 9px 22px;
-  background: #4f9cf9;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -836,15 +846,16 @@ button:disabled {
   cursor: not-allowed;
 }
 .btn-secondary {
-  background: #333;
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 
 .msg-success {
-  color: #4ade80;
+  color: var(--pos-text);
   font-size: 0.88rem;
 }
 .msg-error {
-  color: #f87171;
+  color: var(--neg-text);
   font-size: 0.88rem;
 }
 
@@ -857,10 +868,10 @@ button:disabled {
 }
 .tag-chip {
   padding: 5px 14px;
-  border: 1px solid #444;
+  border: 1px solid var(--border-soft);
   border-radius: 20px;
-  background: #1e1e1e;
-  color: #aaa;
+  background: var(--bg-mute);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 0.84rem;
   transition:
@@ -869,22 +880,22 @@ button:disabled {
     color 0.15s;
 }
 .tag-chip.active {
-  background: #1a3a1a;
-  border-color: #4ade80;
-  color: #4ade80;
+  background: var(--win-bg);
+  border-color: var(--win-border);
+  color: var(--win-text);
 }
 .tag-chip--blue.active {
-  background: #0f2a4a;
-  border-color: #4f9cf9;
-  color: #4f9cf9;
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .tag-chip:hover:not(.active) {
-  border-color: #555;
-  color: #ccc;
+  border-color: var(--border);
+  color: var(--text-1);
 }
 .tag-empty {
   font-size: 0.82rem;
-  color: #555;
+  color: var(--text-3);
   font-style: italic;
 }
 
@@ -893,19 +904,19 @@ button:disabled {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #1e1e1e;
+  background: var(--bg-mute);
   cursor: pointer;
   font-size: 0.9rem;
-  color: #e0e0e0;
+  color: var(--text-1);
   user-select: none;
 }
 .checkbox-field input[type='checkbox'] {
   width: 16px;
   height: 16px;
   cursor: pointer;
-  accent-color: #4f9cf9;
+  accent-color: var(--accent);
 }
 
 .color-picker {
@@ -914,38 +925,39 @@ button:disabled {
   flex-wrap: wrap;
 }
 .color-chip {
-  padding: 5px 14px;
-  border-radius: 20px;
-  border: 1px solid #444;
-  background: #1e1e1e;
-  color: #aaa;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--bg-mute);
   cursor: pointer;
-  font-size: 0.84rem;
-  transition: all 0.15s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
 }
-.color-chip--red.active {
-  background: #450a0a;
-  border-color: #ef4444;
-  color: #ef4444;
+.color-chip:hover {
+  transform: scale(1.15);
+  filter: brightness(1.2);
 }
-.color-chip--orange.active {
-  background: #431407;
-  border-color: #f97316;
-  color: #f97316;
+.color-chip--red { background: var(--rating-red); }
+.color-chip--orange { background: var(--rating-orange); }
+.color-chip--yellow { background: var(--rating-yellow); }
+.color-chip--green { background: var(--rating-green); }
+
+.color-chip.active {
+  border-color: var(--rating-glow);
+  transform: scale(1.25);
+  box-shadow: 0 0 12px currentColor;
 }
-.color-chip--yellow.active {
-  background: #422006;
-  border-color: #eab308;
-  color: #eab308;
-}
-.color-chip--green.active {
-  background: #052e16;
-  border-color: #22c55e;
-  color: #22c55e;
-}
+
+.color-chip--red.active { box-shadow: 0 0 12px var(--rating-red); }
+.color-chip--orange.active { box-shadow: 0 0 12px var(--rating-orange); }
+.color-chip--yellow.active { box-shadow: 0 0 12px var(--rating-yellow); }
+.color-chip--green.active { box-shadow: 0 0 12px var(--rating-green); }
+
 .color-chip:hover:not(.active) {
-  border-color: #555;
-  color: #ccc;
+  border-color: var(--border);
+  color: var(--text-1);
 }
 
 .image-url-list {
@@ -962,10 +974,10 @@ button:disabled {
 }
 .btn-url-add,
 .btn-url-remove {
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #252525;
-  color: #ccc;
+  background: var(--bg-input);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 0.82rem;
   padding: 6px 12px;
@@ -981,6 +993,6 @@ button:disabled {
 }
 
 .session-display.session-empty {
-  color: #555;
+  color: var(--text-3);
 }
 </style>

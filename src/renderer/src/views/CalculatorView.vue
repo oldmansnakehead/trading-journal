@@ -172,9 +172,9 @@ function setPreset(type) {
 <style scoped>
 .calculator-container {
   min-height: 100%;
-  background-color: #0c0c0e;
+  background-color: var(--bg);
   padding: 40px 20px;
-  color: #e2e4e9;
+  color: var(--text-1);
   font-family: 'Inter', -apple-system, sans-serif;
 }
 
@@ -189,12 +189,12 @@ function setPreset(type) {
 .title {
   font-size: 2rem;
   font-weight: 800;
-  color: #fff;
+  color: var(--text-1);
   letter-spacing: -0.5px;
   margin-bottom: 8px;
 }
 .subtitle {
-  color: #8a8d98;
+  color: var(--text-2);
   font-size: 1rem;
 }
 
@@ -209,11 +209,10 @@ function setPreset(type) {
 }
 
 .glass-card {
-  background: rgba(22, 22, 26, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--bg-mute);
+  border: 1px solid var(--border);
   border-radius: 20px;
   padding: 24px;
-  backdrop-filter: blur(10px);
 }
 
 .section-card {
@@ -224,7 +223,7 @@ function setPreset(type) {
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
-  color: #636681;
+  color: var(--text-3);
   letter-spacing: 1.5px;
   margin-bottom: 24px;
 }
@@ -239,9 +238,9 @@ function setPreset(type) {
 
 .preset-buttons { display: flex; gap: 8px; }
 .preset-btn {
-  background: #1e1e24;
-  border: 1px solid #2d2d35;
-  color: #8a8d98;
+  background: var(--bg-select-item);
+  border: 1px solid var(--bg-select);
+  color: var(--text-2);
   padding: 4px 12px;
   border-radius: 100px;
   font-size: 0.7rem;
@@ -250,9 +249,9 @@ function setPreset(type) {
   transition: all 0.2s;
 }
 .preset-btn:hover {
-  background: #2d2d35;
-  color: #fff;
-  border-color: #3b82f6;
+  background: var(--bg-select);
+  color: var(--text-1);
+  border-color: var(--accent);
 }
 
 .input-grid {
@@ -267,22 +266,21 @@ function setPreset(type) {
 .input-field label {
   font-size: 0.85rem;
   font-weight: 500;
-  color: #a1a3b5;
+  color: var(--text-2);
 }
 
 .input-field input {
-  background: #09090b;
-  border: 1px solid #1e1e24;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 14px 16px;
-  color: #fff;
+  color: var(--text-1);
   font-size: 1.05rem;
   outline: none;
   transition: all 0.2s;
 }
 .input-field input:focus {
-  border-color: #3b82f6;
-  background: #000;
+  border-color: var(--accent);
   box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
 }
 
@@ -297,13 +295,13 @@ function setPreset(type) {
 .suffix {
   position: absolute;
   right: 16px;
-  color: #525464;
+  color: var(--text-3);
   font-weight: 600;
 }
 
 .field-hint {
   font-size: 0.7rem;
-  color: #525464;
+  color: var(--text-3);
   margin-top: 4px;
 }
 
@@ -315,12 +313,12 @@ function setPreset(type) {
 
 .primary-result-card {
   position: relative;
-  background: #111116;
-  border: 1px solid #22222a;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 24px;
   padding: 40px;
   overflow: hidden;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.3);
 }
 
 .glow-effect {
@@ -343,7 +341,7 @@ function setPreset(type) {
   font-size: 0.8rem;
   font-weight: 700;
   text-transform: uppercase;
-  color: #636681;
+  color: var(--text-3);
   letter-spacing: 2px;
   margin-bottom: 12px;
 }
@@ -351,10 +349,9 @@ function setPreset(type) {
 .lot-display {
   font-size: 5rem;
   font-weight: 900;
-  color: #fff;
+  color: var(--text-1);
   line-height: 1;
   margin-bottom: 30px;
-  text-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 
 .stats-mini-grid {
@@ -362,11 +359,11 @@ function setPreset(type) {
   grid-template-columns: 1fr 1fr;
   gap: 20px;
   padding-bottom: 30px;
-  border-bottom: 1px solid #1e1e24;
+  border-bottom: 1px solid var(--border);
 }
 
 .stat-item { display: flex; flex-direction: column; gap: 4px; }
-.stat-label { font-size: 0.7rem; font-weight: 600; color: #525464; text-transform: uppercase; }
+.stat-label { font-size: 0.7rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; }
 .stat-value { font-size: 1.4rem; font-weight: 700; }
 .stat-value.profit { color: #10b981; }
 .stat-value.loss { color: #ef4444; }
@@ -378,33 +375,33 @@ function setPreset(type) {
   display: block;
   font-size: 0.65rem;
   font-weight: 700;
-  color: #3f3f4e;
+  color: var(--text-3);
   text-transform: uppercase;
   margin-bottom: 12px;
 }
 
 .math-box {
-  background: #09090b;
-  border: 1px solid #1a1a20;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   padding: 16px;
   border-radius: 12px;
   font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
   font-size: 0.75rem;
-  color: #a1a3b5;
+  color: var(--text-2);
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
-.math-val { color: #e2e4e9; font-weight: 600; }
-.math-op { color: #4b4d63; }
-.math-group { color: #a1a3b5; display: flex; align-items: center; gap: 4px; }
-.math-bracket { color: #4b4d63; font-weight: bold; }
-.math-equals { color: #3b82f6; font-weight: 700; margin-left: auto; }
+.math-val { color: var(--text-1); font-weight: 600; }
+.math-op { color: var(--text-3); }
+.math-group { color: var(--text-2); display: flex; align-items: center; gap: 4px; }
+.math-bracket { color: var(--text-3); font-weight: bold; }
+.math-equals { color: var(--accent); font-weight: 700; margin-left: auto; }
 
 .info-note {
-  background: rgba(59, 130, 246, 0.05);
-  border: 1px solid rgba(59, 130, 246, 0.1);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
   border-radius: 16px;
   padding: 16px 20px;
   display: flex;
@@ -415,7 +412,7 @@ function setPreset(type) {
 .info-note p {
   font-size: 0.75rem;
   line-height: 1.5;
-  color: #717384;
+  color: var(--text-2);
   margin: 0;
 }
 </style>

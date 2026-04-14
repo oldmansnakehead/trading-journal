@@ -39,10 +39,12 @@ const RESULTS = ['Win', 'Loss', 'Breakeven']
 const setups = ref([])
 const strategies = ref([])
 const symbolOptions = ref([])
+const sessionOptions = ref([])
 
 const filters = ref({
   sessions: [],
   rrTypes: [],
+  rrTypeIds: [],
   symbols: [],
   setupId: '',
   strategyId: '',
@@ -82,6 +84,28 @@ const nativeEditExitRef = ref(null)
 const showGallery = ref(false)
 const galleryImages = ref([])
 const galleryIndex = ref(0)
+
+// ── Table Sort ────────────────────────────────────────────────────────────────
+const sortCol = ref('entryDateTime')
+const sortDir = ref('asc') // 'asc' | 'desc'
+
+const SORT_OPTIONS = [
+  { value: 'entryDateTime', label: 'Entry Date' },
+  { value: 'exitDateTime',  label: 'Exit Date' },
+  { value: 'symbol',        label: 'Symbol' },
+  { value: 'result',        label: 'Result' },
+  { value: 'session',       label: 'Session' },
+  { value: 'position',      label: 'Position' },
+  { value: 'rrr',           label: 'RRR' },
+  { value: 'dollarPnl',     label: '$PnL' },
+  { value: 'drawdown',      label: 'Drawdown' },
+  { value: 'isTest',        label: 'Test Item' },
+]
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+const currentPage = ref(1)
+const pageSize = ref(50)
+
 
 // ── Account Settings ──────────────────────────────────────────────────────────
 const initialBalance = ref(500)
@@ -160,8 +184,26 @@ function calcRRR(result, rrTypeRatio, legacyRrTypeStr) {
   return { risk: 0, reward: 0, rrr: 0 } // Breakeven
 }
 
+// ── Sort raw results before enriching (so `no` follows sorted order) ──────────
+const sortedResults = computed(() => {
+  if (!sortCol.value) return results.value
+  const col = sortCol.value
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  return [...results.value].sort((a, b) => {
+    let va = a[col]
+    let vb = b[col]
+    if (va == null) return 1
+    if (vb == null) return -1
+    if (typeof va === 'string') va = va.toLowerCase()
+    if (typeof vb === 'string') vb = vb.toLowerCase()
+    if (va < vb) return -1 * dir
+    if (va > vb) return 1 * dir
+    return 0
+  })
+})
+
 // ── Computed table rows with running balance/drawdown ─────────────────────────
-const enrichedRows = computed(() => {
+const sortedRows = computed(() => {
   const bal0 = initialBalance.value
   const baseRiskPct = riskPercent.value / 100
   let runningBalance = bal0
@@ -169,10 +211,24 @@ const enrichedRows = computed(() => {
   let cumLogReturn = 0
   let currentConsecutiveLosses = 0
 
-  return results.value.map((row, i) => {
-    const { risk, reward, rrr } = calcRRR(row.result, row.rrTypeRatio, row.rrType)
+  return sortedResults.value.map((row, i) => {
+    // Skip test items from financial/progression calculations
+    if (row.isTest) {
+      return {
+        ...row,
+        risk: 0,
+        reward: 0,
+        rrr: 0,
+        dollarPnl: 0,
+        pctPnl: 0,
+        balance: runningBalance,
+        drawdown: +((runningBalance / peakBalance - 1) * 100).toFixed(2),
+        holding: '—', // Placeholder, could calc if needed, but keeping it simple
+        no: i + 1
+      }
+    }
 
-    // Auto-Reduce Risk Logic: Reduce to 0.5% if 3 consecutive losses
+    const { risk, reward, rrr } = calcRRR(row.result, row.rrTypeRatio, row.rrType)
     let appliedRiskPct = baseRiskPct
     if (currentConsecutiveLosses >= 3) {
       appliedRiskPct = 0.5 / 100 // Temporary 0.5% risk
@@ -233,10 +289,25 @@ const enrichedRows = computed(() => {
   })
 })
 
+const totalPages = computed(() => Math.ceil(sortedRows.value.length / pageSize.value) || 1)
+
+const paginatedRows = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return sortedRows.value.slice(start, start + pageSize.value)
+})
+
+function goToPage(p) {
+  currentPage.value = Math.max(1, Math.min(p, totalPages.value))
+}
+
+watch([sortedRows, pageSize], () => {
+  currentPage.value = 1
+})
+
 // ── Enhanced Summary ──────────────────────────────────────────────────────────
 const enhancedSummary = computed(() => {
   if (!summary.value) return null
-  const rows = enrichedRows.value
+  const rows = sortedRows.value.filter(r => !r.isTest && !r.isExcluded)
   const wins = rows.filter((r) => r.result === 'Win')
   const losses = rows.filter((r) => r.result === 'Loss')
 
@@ -410,6 +481,7 @@ async function runQuery() {
     const f = {
       sessions: [...filters.value.sessions],
       rrTypes: [...filters.value.rrTypes],
+      rrTypeIds: [...filters.value.rrTypeIds],
       symbols: [...filters.value.symbols],
       setupId: filters.value.setupId ? Number(filters.value.setupId) : null,
       strategyId: filters.value.strategyId ? Number(filters.value.strategyId) : null,
@@ -427,11 +499,8 @@ async function runQuery() {
     results.value = rows
     summary.value = stat
     
-    // Inject legacy combinations of RR Types securely to support historical DB mappings:
-    rrTypeOptions.value = Array.from(new Set([
-      ...allRRTypes.map(r => r.name), 
-      ...rows.map(r => r.rrTypeName || r.rrType).filter(Boolean)
-    ]))
+    // Use allRRTypes directly for ID binding
+    rrTypeOptions.value = allRRTypes
 
   } catch (e) {
     loadError.value = e.message ?? 'โหลดข้อมูลไม่สำเร็จ'
@@ -441,21 +510,21 @@ async function runQuery() {
 }
 
 watch(showCharts, (val) => {
-  if (val && enrichedRows.value.length) {
+  if (val && sortedRows.value.length) {
     nextTick(() => {
-      updateCharts(enrichedRows.value)
-      updatePnlChart(enrichedRows.value)
+      updateCharts(sortedRows.value)
+      updatePnlChart(sortedRows.value)
     })
   }
 })
 
 watch(pnlGroupBy, () => {
-  if (showCharts.value && enrichedRows.value.length) {
-    updatePnlChart(enrichedRows.value)
+  if (showCharts.value && sortedRows.value.length) {
+    updatePnlChart(sortedRows.value)
   }
 })
 
-watch(enrichedRows, (newVal) => {
+watch(sortedRows, (newVal) => {
   if (showCharts.value && newVal?.length) {
     nextTick(() => {
       updateCharts(newVal)
@@ -482,9 +551,11 @@ function updateCharts(rows) {
   // 1. Equity Curve
   if (equityChart) equityChart.destroy()
   const ctxE = equityChartCanvas.value.getContext('2d')
+  const isDark = document.documentElement.dataset.theme !== 'light'
+  
   const gradE = ctxE.createLinearGradient(0, 0, 0, 300)
-  gradE.addColorStop(0, 'rgba(16, 185, 129, 0.25)')
-  gradE.addColorStop(1, 'rgba(16, 185, 129, 0)')
+  gradE.addColorStop(0, isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(37, 99, 235, 0.1)')
+  gradE.addColorStop(1, 'rgba(59, 130, 246, 0)')
 
   equityChart = new Chart(ctxE, {
     type: 'line',
@@ -494,9 +565,9 @@ function updateCharts(rows) {
         {
           label: 'Equity',
           data: equityPoints,
-          borderColor: '#10b981',
-          borderWidth: 2.5,
-          tension: 0.35,
+          borderColor: isDark ? '#3b82f6' : '#2563eb',
+          borderWidth: 2,
+          tension: 0.4,
           fill: true,
           backgroundColor: gradE,
           pointRadius: 0,
@@ -506,7 +577,7 @@ function updateCharts(rows) {
         {
           label: 'Trend',
           data: trendLine,
-          borderColor: 'rgba(255, 255, 255, 0.2)',
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
           borderWidth: 1.5,
           borderDash: [5, 5],
           tension: 0,
@@ -521,8 +592,14 @@ function updateCharts(rows) {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#555', font: { size: 10 } } },
-        y: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#555', font: { size: 10 } } }
+        x: { 
+          grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }, 
+          ticks: { color: isDark ? '#636363' : '#9ca3af', font: { size: 10, weight: '600' } } 
+        },
+        y: { 
+          grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }, 
+          ticks: { color: isDark ? '#636363' : '#9ca3af', font: { size: 10, weight: '600' } } 
+        }
       }
     }
   })
@@ -531,8 +608,8 @@ function updateCharts(rows) {
   if (drawdownChart) drawdownChart.destroy()
   const ctxD = drawdownChartCanvas.value.getContext('2d')
   const gradD = ctxD.createLinearGradient(0, 0, 0, 150)
-  gradD.addColorStop(0, 'rgba(239, 68, 68, 0.25)')
-  gradD.addColorStop(1, 'rgba(239, 68, 68, 0)')
+  gradD.addColorStop(0, isDark ? 'rgba(248, 113, 113, 0.15)' : 'rgba(220, 38, 38, 0.1)')
+  gradD.addColorStop(1, 'rgba(248, 113, 113, 0)')
 
   drawdownChart = new Chart(ctxD, {
     type: 'line',
@@ -542,9 +619,9 @@ function updateCharts(rows) {
         {
           label: 'Drawdown (%)',
           data: drawdownPoints,
-          borderColor: '#ef4444',
-          borderWidth: 2,
-          tension: 0.35,
+          borderColor: isDark ? '#f87171' : '#dc2626',
+          borderWidth: 1.5,
+          tension: 0.4,
           fill: true,
           backgroundColor: gradD,
           pointRadius: 0
@@ -558,10 +635,10 @@ function updateCharts(rows) {
       scales: {
         x: { display: false },
         y: {
-          grid: { color: 'rgba(255,255,255,0.03)' },
+          grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' },
           ticks: {
-            color: '#666',
-            font: { size: 10 },
+            color: isDark ? '#636363' : '#9ca3af',
+            font: { size: 10, weight: '600' },
             callback: (v) => v.toFixed(1) + '%'
           }
         }
@@ -665,6 +742,7 @@ function clearFilters() {
   filters.value = {
     sessions: [],
     rrTypes: [],
+    rrTypeIds: [],
     symbols: [],
     setupId: '',
     strategyId: '',
@@ -678,6 +756,15 @@ function clearFilters() {
   symbolInput.value = ''
   runQuery()
 }
+
+onMounted(async () => {
+  await loadSettings()
+  await runQuery()
+})
+
+onActivated(async () => {
+  await runQuery()
+})
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(dt) {
@@ -693,6 +780,7 @@ function fmtTime(dt) {
     hour12: false
   })
 }
+
 
 async function deleteRow(id) {
   if (!confirm('Delete this journal entry?')) return
@@ -740,8 +828,10 @@ async function openEdit(row) {
     tpPoint: row.tpPoint != null ? String(row.tpPoint) : '',
     result: row.result ?? 'Win',
     notes: row.notes ?? '',
-    hasNews: row.hasNews ? true : false,
-    colorRating: row.colorRating ?? ''
+    colorRating: row.colorRating ?? '',
+    hasNews: !!row.hasNews,
+    isTest: !!row.isTest,
+    isExcluded: !!row.isExcluded
   }
   editImageUrlInputs.value = row.imageUrls?.length ? [...row.imageUrls] : ['']
   editSelectedStrategyIds.value = []
@@ -856,8 +946,10 @@ async function saveEdit() {
       result: editForm.value.result,
       notes: editForm.value.notes || null,
       setupId: Number(editForm.value.setupId),
-      hasNews: editForm.value.hasNews ? 1 : 0,
       colorRating: editForm.value.colorRating || null,
+      hasNews: editForm.value.hasNews ? 1 : 0,
+      isTest: editForm.value.isTest ? 1 : 0,
+      isExcluded: editForm.value.isExcluded ? 1 : 0,
       timeBos: editSelectedCustomTagIds.value
         .map((id) => editAllCustomTags.value.find((t) => t.id === id)?.name)
         .filter(Boolean)
@@ -1032,8 +1124,8 @@ function openInBrowser(url) {
       <div class="filter-group">
         <div class="filter-label">RR Type</div>
         <div class="checkbox-row">
-          <label v-for="r in rrTypeOptions" :key="r" class="check-label">
-            <input v-model="filters.rrTypes" type="checkbox" :value="r" />{{ r }}
+          <label v-for="r in rrTypeOptions" :key="r.id" class="check-label">
+            <input v-model="filters.rrTypeIds" type="checkbox" :value="r.id" />{{ r.name }}
           </label>
           <span v-if="!rrTypeOptions.length" class="empty-hint">No RR Types defined</span>
         </div>
@@ -1287,10 +1379,24 @@ function openInBrowser(url) {
 
     <!-- ── Results Table ─────────────────────────────────────────────────── -->
     <div class="table-wrapper">
-      <table v-if="enrichedRows.length">
+      <!-- Sort bar -->
+      <div v-if="sortedRows.length" class="sort-bar">
+        <span class="sort-bar-label">Sort by</span>
+        <select v-model="sortCol" class="sort-select">
+          <option v-for="opt in SORT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <button
+          class="sort-dir-btn"
+          :title="sortDir === 'asc' ? 'Ascending' : 'Descending'"
+          @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'"
+        >{{ sortDir === 'asc' ? '↑ Asc' : '↓ Desc' }}</button>
+      </div>
+
+      <table v-if="sortedRows.length">
         <thead>
           <tr>
             <th>No.</th>
+            <th>ทดสอบ</th>
             <th>Entry Date</th>
             <th>Symbol</th>
             <th>Direction</th>
@@ -1315,16 +1421,21 @@ function openInBrowser(url) {
             <th>{{ customColumnName }}</th>
             <th>News</th>
             <th>Rating</th>
+            <th>Excl.</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           <tr
-            v-for="row in enrichedRows"
+            v-for="row in paginatedRows"
             :key="row.id"
-            :class="row.result === 'Win' ? 'row-win' : row.result === 'Loss' ? 'row-loss' : ''"
+            :class="[
+              row.result === 'Win' ? 'row-win' : row.result === 'Loss' ? 'row-loss' : '',
+              row.isExcluded ? 'row-excluded' : ''
+            ]"
           >
             <td class="num">{{ row.no }}</td>
+            <td class="test-cell">{{ row.isTest ? '🧪' : '—' }}</td>
             <td>{{ fmtDate(row.entryDateTime) }}</td>
             <td class="sym">{{ row.symbol }}</td>
             <td
@@ -1367,6 +1478,7 @@ function openInBrowser(url) {
               ></span>
               <span v-else>—</span>
             </td>
+            <td class="excl-cell">{{ row.isExcluded ? '✖' : '—' }}</td>
             <td class="action-cell">
               <button
                 v-if="row.imageUrls?.length"
@@ -1383,6 +1495,40 @@ function openInBrowser(url) {
         </tbody>
       </table>
       <p v-else-if="!isLoading" class="empty-msg">No records match the current filters.</p>
+
+      <!-- ── Pagination Controls ─────────────────────────────────────────── -->
+      <div v-if="sortedRows.length > 0" class="pagination-bar">
+        <div class="pagination-info">
+          <span>Rows per page:</span>
+          <select v-model.number="pageSize" class="page-size-select">
+            <option :value="25">25</option>
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+            <option :value="200">200</option>
+          </select>
+          <span class="pagination-count">
+            {{ (currentPage - 1) * pageSize + 1 }}–{{ Math.min(currentPage * pageSize, sortedRows.length) }} of {{ sortedRows.length }}
+          </span>
+        </div>
+        <div class="pagination-controls">
+          <button class="page-btn" :disabled="currentPage === 1" @click="goToPage(1)">«</button>
+          <button class="page-btn" :disabled="currentPage === 1" @click="goToPage(currentPage - 1)">‹</button>
+          <template v-for="p in totalPages" :key="p">
+            <button
+              v-if="p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2"
+              class="page-btn"
+              :class="{ active: p === currentPage }"
+              @click="goToPage(p)"
+            >{{ p }}</button>
+            <span
+              v-else-if="p === currentPage - 3 || p === currentPage + 3"
+              class="page-ellipsis"
+            >…</span>
+          </template>
+          <button class="page-btn" :disabled="currentPage === totalPages" @click="goToPage(currentPage + 1)">›</button>
+          <button class="page-btn" :disabled="currentPage === totalPages" @click="goToPage(totalPages)">»</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1575,20 +1721,14 @@ function openInBrowser(url) {
               <label>ระดับสี (Quality)</label>
               <div class="edit-color-picker">
                 <button
-                  v-for="c in [
-                    ['red', 'แดง'],
-                    ['orange', 'ส้ม'],
-                    ['yellow', 'เหลือง'],
-                    ['green', 'เขียว']
-                  ]"
-                  :key="c[0]"
+                  v-for="c in ['red', 'orange', 'yellow', 'green']"
+                  :key="c"
                   type="button"
                   class="edit-color-chip"
-                  :class="[`color-chip--${c[0]}`, { active: editForm.colorRating === c[0] }]"
-                  @click="editForm.colorRating = editForm.colorRating === c[0] ? '' : c[0]"
-                >
-                  {{ c[1] }}
-                </button>
+                  :class="[`color-chip--${c}`, { active: editForm.colorRating === c }]"
+                  @click="editForm.colorRating = editForm.colorRating === c ? '' : c"
+                  :title="c"
+                ></button>
               </div>
             </div>
           </div>
@@ -1631,6 +1771,30 @@ function openInBrowser(url) {
               <button type="button" class="btn-url-add" @click="addEditImageUrl">
                 + Add Image URL
               </button>
+            </div>
+          </div>
+
+          <div class="edit-row">
+            <div class="edit-group">
+              <label>News</label>
+              <label class="checkbox-field">
+                <input v-model="editForm.hasNews" type="checkbox" />
+                <span>{{ editForm.hasNews ? 'มีข่าว' : 'ไม่มีข่าว' }}</span>
+              </label>
+            </div>
+            <div class="edit-group">
+              <label>รายการทดสอบ</label>
+              <label class="checkbox-field">
+                <input v-model="editForm.isTest" type="checkbox" />
+                <span>{{ editForm.isTest ? 'เป็นรายการทดสอบ' : 'รายการจริง' }}</span>
+              </label>
+            </div>
+            <div class="edit-group">
+              <label>รายการไม่นับรวม</label>
+              <label class="checkbox-field">
+                <input v-model="editForm.isExcluded" type="checkbox" />
+                <span>{{ editForm.isExcluded ? 'ไม่นับรวมสถิติ' : 'นับรวมสถิติปกติ' }}</span>
+              </label>
             </div>
           </div>
 
@@ -1756,15 +1920,15 @@ function openInBrowser(url) {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-mute);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 16px;
   font-size: 0.84rem;
 }
 .db-label {
   font-weight: 700;
-  color: #666;
+  color: var(--text-3);
   text-transform: uppercase;
   font-size: 0.72rem;
   letter-spacing: 0.05em;
@@ -1772,7 +1936,7 @@ function openInBrowser(url) {
 }
 .db-path {
   flex: 1;
-  color: #555;
+  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1782,21 +1946,21 @@ function openInBrowser(url) {
 }
 .btn-sm {
   padding: 4px 12px;
-  background: #252525;
-  color: #aaa;
-  border: 1px solid #333;
+  background: var(--bg-input);
+  color: var(--text-2);
+  border: 1px solid var(--border-soft);
   border-radius: 5px;
   font-size: 0.8rem;
   cursor: pointer;
   white-space: nowrap;
 }
 .btn-sm:hover {
-  background: #333;
-  color: #e0e0e0;
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 .btn-danger {
-  border-color: #5a1a1a;
-  color: #f87171;
+  border-color: var(--loss-border);
+  color: var(--neg-text);
 }
 .btn-danger:hover {
   background: #5a1a1a;
@@ -1808,8 +1972,8 @@ function openInBrowser(url) {
   align-items: flex-end;
   gap: 20px;
   flex-wrap: wrap;
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-mute);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px 20px;
   margin-bottom: 16px;
@@ -1823,57 +1987,55 @@ function openInBrowser(url) {
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
-  color: #777;
+  color: var(--text-3);
   letter-spacing: 0.05em;
 }
 .setting-item input {
   width: 120px;
   padding: 6px 10px;
-  background: #252525;
-  border: 1px solid #333;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  color: #e0e0e0;
+  color: var(--text-1);
   font-size: 0.9rem;
 }
 .setting-derived {
   font-size: 0.88rem;
-  color: #aaa;
+  color: var(--text-2);
   padding-bottom: 6px;
 }
 .setting-derived strong {
-  color: #4f9cf9;
+  color: var(--accent);
 }
 
-/* Filter panel */
+/* Filter panel (Minimalist) */
 .filter-panel {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
-  border-radius: 10px;
-  padding: 20px;
-  margin-bottom: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
 }
 .filter-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-.filter-group.sm {
-  min-width: 160px;
-  flex: 1;
+  gap: 10px;
 }
 .filter-label {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #777;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  margin-bottom: 2px;
 }
 .filter-row {
   display: flex;
-  gap: 16px;
+  gap: 20px;
   flex-wrap: wrap;
 }
 .checkbox-row {
@@ -1887,7 +2049,7 @@ function openInBrowser(url) {
   gap: 5px;
   font-size: 0.88rem;
   cursor: pointer;
-  color: #ccc;
+  color: var(--text-1);
 }
 
 .symbol-row {
@@ -1898,17 +2060,17 @@ function openInBrowser(url) {
 }
 .sym-chip {
   padding: 4px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 14px;
-  background: #252525;
-  color: #bbb;
+  background: var(--bg-input);
+  color: var(--text-2);
   font-size: 0.82rem;
   cursor: pointer;
 }
 .sym-chip.active {
-  background: #4f9cf9;
+  background: var(--accent);
   color: #fff;
-  border-color: #4f9cf9;
+  border-color: var(--accent);
 }
 .sym-input-row {
   display: flex;
@@ -1917,18 +2079,18 @@ function openInBrowser(url) {
 .sym-input-row input {
   width: 100px;
   padding: 4px 8px;
-  background: #1e1e1e;
-  border: 1px solid #333;
+  background: var(--bg-mute);
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  color: #e0e0e0;
+  color: var(--text-1);
   font-size: 0.85rem;
 }
 .sym-input-row button {
   padding: 4px 10px;
-  background: #333;
+  background: var(--bg-hover);
   border: none;
   border-radius: 6px;
-  color: #e0e0e0;
+  color: var(--text-1);
   cursor: pointer;
 }
 .active-chips {
@@ -1940,8 +2102,8 @@ function openInBrowser(url) {
   display: flex;
   align-items: center;
   gap: 4px;
-  background: #2a3f5f;
-  color: #7fb3f5;
+  background: var(--accent-bg);
+  color: var(--text-active);
   border-radius: 12px;
   padding: 3px 10px;
   font-size: 0.82rem;
@@ -1949,7 +2111,7 @@ function openInBrowser(url) {
 .active-chip button {
   background: none;
   border: none;
-  color: #7fb3f5;
+  color: var(--text-active);
   cursor: pointer;
   font-size: 1rem;
   padding: 0;
@@ -1957,34 +2119,56 @@ function openInBrowser(url) {
 }
 
 select,
-input[type='text'] {
-  padding: 7px 10px;
-  border: 1px solid #333;
-  border-radius: 6px;
-  background: #1e1e1e;
-  color: #e0e0e0;
+input[type='text'],
+input[type='number'] {
+  appearance: none;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-1);
   font-size: 0.88rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+select:focus,
+input[type='text']:focus,
+input[type='number']:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+select {
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(128,128,128,0.5)' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  cursor: pointer;
 }
 .date-input-wrap {
   position: relative;
+  display: flex;
+  flex: 1;
 }
 .date-input-wrap > input[type='text'] {
   width: 100%;
-  padding-right: 38px;
 }
 .date-picker-btn {
   position: absolute;
   top: 50%;
-  right: 6px;
+  right: 8px;
   transform: translateY(-50%);
-  padding: 3px 7px;
-  border: 1px solid #333;
-  border-radius: 6px;
-  background: #252525;
-  color: #ccc;
+  padding: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
   cursor: pointer;
-  font-size: 0.85rem;
-  line-height: 1;
+  font-size: 0.9rem;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.date-picker-btn:hover {
+  opacity: 1;
 }
 .native-date-picker {
   position: absolute;
@@ -1995,79 +2179,100 @@ input[type='text'] {
 }
 select:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .filter-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
+  margin-top: 8px;
 }
 .btn-primary {
-  padding: 8px 20px;
-  background: #4f9cf9;
+  padding: 10px 24px;
+  background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
   font-size: 0.9rem;
+  transition: all 0.2s;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--accent-bg);
 }
 .btn-primary:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
 }
 .btn-secondary {
-  padding: 8px 16px;
-  background: #333;
-  color: #ccc;
-  border: none;
-  border-radius: 6px;
+  padding: 10px 20px;
+  background: var(--bg-hover);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   cursor: pointer;
   font-size: 0.9rem;
+  transition: all 0.2s;
+}
+.btn-secondary:hover {
+  background: var(--bg-mute);
+  color: var(--text-1);
 }
 .result-count {
   font-size: 0.85rem;
-  color: #777;
+  color: var(--text-3);
   margin-left: 8px;
 }
 
-/* Stats grid */
+/* Stats grid (Minimalist Cards) */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
 }
 .stat {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
-  border-radius: 8px;
-  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
   text-align: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.stat:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
 }
 .stat.win {
-  border-color: #166534;
-  background: #052e16;
+  border-color: var(--win-border);
+  background: var(--win-bg);
 }
 .stat.loss {
-  border-color: #7f1d1d;
-  background: #2d0a0a;
+  border-color: var(--loss-border);
+  background: var(--loss-bg);
 }
 .stat-label {
-  font-size: 0.68rem;
+  font-size: 0.65rem;
+  font-weight: 700;
   text-transform: uppercase;
-  color: #777;
-  letter-spacing: 0.05em;
+  color: var(--text-3);
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
 }
 .stat-value {
-  font-size: 1.1rem;
+  font-size: 1.25rem;
   font-weight: 700;
-  margin-top: 4px;
+  color: var(--text-1);
 }
 .stat.win .stat-value {
-  color: #4ade80;
+  color: var(--win-text);
 }
 .stat.loss .stat-value {
-  color: #f87171;
+  color: var(--loss-text);
 }
 
 /* Table */
@@ -2077,95 +2282,169 @@ select:disabled {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: 0.9rem;
 }
 th {
   text-align: left;
-  padding: 8px 10px;
-  background: #1a1a1a;
-  color: #888;
-  font-size: 0.68rem;
+  padding: 14px 16px;
+  background: var(--bg-soft);
+  color: var(--text-3);
+  font-size: 0.7rem;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid #2a2a2a;
+  letter-spacing: 0.12em;
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
+}
+.th-sort {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.th-sort:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.sort-icon {
+  margin-left: 5px;
+  font-size: 0.65rem;
+  opacity: 0.5;
+  vertical-align: middle;
+}
+.th-sort:hover .sort-icon,
+.th-sort.active .sort-icon {
+  opacity: 1;
+}
+.th-sort.active {
+  color: var(--accent);
+  background: var(--accent-bg);
 }
 td {
-  padding: 7px 10px;
-  border-bottom: 1px solid #1f1f1f;
-  color: #ccc;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-2);
   white-space: nowrap;
+  font-size: 0.88rem;
+  transition: background 0.15s;
 }
 tr:hover td {
-  background: #1e1e1e;
+  background: var(--bg-soft) !important;
 }
 tr.row-win td {
-  background: #040e09;
+  background: var(--row-win-bg);
 }
 tr.row-loss td {
-  background: #0e0404;
+  background: var(--row-loss-bg);
 }
 
 .sym {
   font-weight: 700;
-  color: #e0e0e0;
+  color: var(--text-1);
 }
 .num {
-  color: #555;
+  color: var(--text-3);
 }
 .bull {
-  color: #4ade80;
+  color: var(--pos-text);
   font-weight: 600;
 }
 .bear {
-  color: #f87171;
+  color: var(--neg-text);
   font-weight: 600;
 }
 .pos {
-  color: #4ade80;
+  color: var(--pos-text);
 }
 .neg {
-  color: #f87171;
+  color: var(--neg-text);
 }
 
 .result-cell.win {
-  color: #4ade80;
+  color: var(--win-text);
   font-weight: 600;
 }
 .result-cell.loss {
-  color: #f87171;
+  color: var(--loss-text);
   font-weight: 600;
 }
 .result-cell.breakeven {
-  color: #facc15;
+  color: var(--breakeven-text);
   font-weight: 600;
 }
 
 .btn-delete {
   background: none;
-  border: 1px solid #444;
+  border: 1px solid var(--border-soft);
   border-radius: 4px;
-  color: #666;
+  color: var(--text-3);
   cursor: pointer;
   padding: 2px 6px;
   font-size: 0.8rem;
 }
 .btn-delete:hover {
-  color: #f87171;
-  border-color: #f87171;
+  color: var(--neg-text);
+  border-color: var(--neg-text);
+}
+tr.row-excluded {
+  opacity: 0.6;
+}
+.test-cell, .excl-cell {
+  text-align: center;
+  font-size: 0.9rem;
 }
 .empty-msg {
   text-align: center;
-  color: #555;
+  color: var(--text-3);
   padding: 40px;
 }
+
+/* Sort bar (Minimalist) */
+.sort-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: fit-content;
+}
+.sort-bar-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.sort-select {
+  min-width: 140px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+.sort-dir-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-2);
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.sort-dir-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
 .err-banner {
-  background: #2d0a0a;
-  border: 1px solid #7f1d1d;
-  border-radius: 8px;
-  color: #f87171;
-  padding: 10px 16px;
-  margin-bottom: 16px;
+  background: var(--loss-bg);
+  border: 1px solid var(--loss-border);
+  border-radius: 12px;
+  color: var(--loss-text);
+  padding: 12px 20px;
+  margin-bottom: 20px;
   font-size: 0.88rem;
 }
 
@@ -2177,74 +2456,75 @@ tr.row-loss td {
 }
 .btn-edit {
   background: none;
-  border: 1px solid #384f6e;
+  border: 1px solid var(--accent-border);
   border-radius: 4px;
-  color: #4f9cf9;
+  color: var(--accent);
   cursor: pointer;
   padding: 2px 7px;
   font-size: 0.8rem;
   line-height: 1.4;
 }
 .btn-edit:hover {
-  border-color: #4f9cf9;
-  background: #0f2a4a;
+  border-color: var(--accent);
+  background: var(--accent-bg);
 }
 .btn-img {
   background: none;
-  border: 1px solid #3d2e5e;
+  border: 1px solid var(--purple-border);
   border-radius: 4px;
-  color: #a78bfa;
+  color: var(--purple);
   cursor: pointer;
   padding: 2px 7px;
   font-size: 0.8rem;
   line-height: 1.4;
 }
 .btn-img:hover {
-  border-color: #a78bfa;
-  background: #1e1040;
+  border-color: var(--purple);
+  background: var(--purple-bg);
 }
 
 /* ── Modal Backdrop & Panel ──────────────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  padding: 20px;
-  backdrop-filter: blur(3px);
+  padding: 24px;
+  backdrop-filter: blur(8px);
 }
 .modal-panel {
-  background: #161616;
-  border: 1px solid #2e2e2e;
-  border-radius: 14px;
+  background: var(--bg-modal);
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
   width: 100%;
   max-width: 820px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
 }
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 22px;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .modal-header h3 {
   font-size: 1rem;
   font-weight: 700;
-  color: #e0e0e0;
+  color: var(--text-1);
   margin: 0;
 }
 .modal-close {
   background: none;
   border: none;
-  color: #555;
+  color: var(--text-3);
   font-size: 1.1rem;
   cursor: pointer;
   padding: 4px 8px;
@@ -2255,8 +2535,8 @@ tr.row-loss td {
     background 0.15s;
 }
 .modal-close:hover {
-  color: #f87171;
-  background: #2d0a0a;
+  color: var(--loss-text);
+  background: var(--loss-bg);
 }
 .modal-body {
   overflow-y: auto;
@@ -2271,12 +2551,12 @@ tr.row-loss td {
   display: flex;
   gap: 10px;
   padding: 14px 22px;
-  border-top: 1px solid #2a2a2a;
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 .btn-save {
   padding: 8px 24px;
-  background: #4f9cf9;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 7px;
@@ -2286,7 +2566,7 @@ tr.row-loss td {
   transition: background 0.15s;
 }
 .btn-save:hover:not(:disabled) {
-  background: #3b82f6;
+  background: var(--accent-hover);
 }
 .btn-save:disabled {
   opacity: 0.5;
@@ -2294,16 +2574,16 @@ tr.row-loss td {
 }
 .btn-cancel {
   padding: 8px 20px;
-  background: #252525;
-  color: #aaa;
-  border: 1px solid #383838;
+  background: var(--bg-input);
+  color: var(--text-2);
+  border: 1px solid var(--border-soft);
   border-radius: 7px;
   font-size: 0.9rem;
   cursor: pointer;
 }
 .btn-cancel:hover {
-  background: #333;
-  color: #e0e0e0;
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 
 /* ── Edit Modal Form ─────────────────────────────────────────────────────────── */
@@ -2327,12 +2607,12 @@ tr.row-loss td {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #666;
+  color: var(--text-3);
 }
 .edit-auto-tag {
   font-weight: 400;
   text-transform: none;
-  color: #4f9cf9;
+  color: var(--accent);
   margin-left: 4px;
 }
 .edit-group input[type='text'],
@@ -2341,10 +2621,10 @@ tr.row-loss td {
 .edit-group select,
 .edit-group textarea {
   padding: 7px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #1e1e1e;
-  color: #e0e0e0;
+  background: var(--bg-modal-inner);
+  color: var(--text-1);
   font-size: 0.88rem;
   transition: border-color 0.2s;
 }
@@ -2352,7 +2632,7 @@ tr.row-loss td {
 .edit-group select:focus,
 .edit-group textarea:focus {
   outline: none;
-  border-color: #4f9cf9;
+  border-color: var(--accent);
 }
 .edit-group textarea {
   resize: vertical;
@@ -2383,31 +2663,31 @@ tr.row-loss td {
 }
 .edit-chip {
   padding: 5px 13px;
-  border: 1px solid #3a3a3a;
+  border: 1px solid var(--border-soft);
   border-radius: 20px;
-  background: #1e1e1e;
-  color: #999;
+  background: var(--bg-mute);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 0.83rem;
   transition: all 0.15s;
 }
 .edit-chip.active {
-  background: #052e16;
-  border-color: #4ade80;
-  color: #4ade80;
+  background: var(--win-bg);
+  border-color: var(--win-border);
+  color: var(--win-text);
 }
 .edit-chip.chip--blue.active {
-  background: #0f2a4a;
-  border-color: #4f9cf9;
-  color: #4f9cf9;
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .edit-chip:hover:not(.active) {
-  border-color: #555;
-  color: #ccc;
+  border-color: var(--border);
+  color: var(--text-1);
 }
 .chip-empty {
   font-size: 0.82rem;
-  color: #444;
+  color: var(--text-3);
   font-style: italic;
 }
 .edit-image-list {
@@ -2424,10 +2704,10 @@ tr.row-loss td {
 }
 .btn-url-add,
 .btn-url-remove {
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #252525;
-  color: #bbb;
+  background: var(--bg-input);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 0.82rem;
   padding: 5px 11px;
@@ -2437,18 +2717,18 @@ tr.row-loss td {
   align-self: flex-start;
 }
 .edit-error {
-  color: #f87171;
+  color: var(--neg-text);
   font-size: 0.87rem;
-  background: #2d0a0a;
-  border: 1px solid #7f1d1d;
+  background: var(--loss-bg);
+  border: 1px solid var(--loss-border);
   border-radius: 6px;
   padding: 8px 12px;
 }
 
 /* ── Image Gallery ───────────────────────────────────────────────────────────── */
 .gallery-panel {
-  background: #0e0e0e;
-  border: 1px solid #252525;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 14px;
   width: 92vw;
   max-width: 1100px;
@@ -2462,8 +2742,8 @@ tr.row-loss td {
   justify-content: space-between;
   align-items: center;
   padding: 12px 20px;
-  border-bottom: 1px solid #1e1e1e;
-  color: #777;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
   font-size: 0.85rem;
   flex-shrink: 0;
 }
@@ -2482,16 +2762,16 @@ tr.row-loss td {
   max-height: 72vh;
   object-fit: contain;
   border-radius: 8px;
-  border: 1px solid #252525;
+  border: 1px solid var(--border);
 }
 .gallery-nav {
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid #333;
+  background: rgba(128, 128, 128, 0.1);
+  border: 1px solid var(--border-soft);
   border-radius: 50%;
   width: 44px;
   height: 44px;
   font-size: 1.6rem;
-  color: #bbb;
+  color: var(--text-2);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2504,17 +2784,17 @@ tr.row-loss td {
   line-height: 1;
 }
 .gallery-nav:hover {
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  background: rgba(128, 128, 128, 0.2);
+  color: var(--text-1);
 }
 .gallery-footer {
   padding: 10px 20px;
-  border-top: 1px solid #1e1e1e;
+  border-top: 1px solid var(--border);
   text-align: center;
   flex-shrink: 0;
 }
 .gallery-link {
-  color: #4f9cf9;
+  color: var(--accent);
   font-size: 0.85rem;
   text-decoration: none;
 }
@@ -2543,9 +2823,9 @@ tr.row-loss td {
   gap: 15px;
 }
 .btn-fullscreen-toggle {
-  background: #252525;
-  border: 1px solid #333;
-  color: #bbb;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  color: var(--text-2);
   padding: 4px 10px;
   border-radius: 4px;
   font-size: 0.72rem;
@@ -2553,9 +2833,9 @@ tr.row-loss td {
   transition: all 0.2s;
 }
 .btn-fullscreen-toggle:hover {
-  background: #333;
-  color: #fff;
-  border-color: #555;
+  background: var(--bg-hover);
+  color: var(--text-1);
+  border-color: var(--border);
 }
 
 /* ── Gallery Web-Card (non-image URLs) ────────────────────────────────────── */
@@ -2565,8 +2845,8 @@ tr.row-loss td {
   align-items: center;
   gap: 16px;
   padding: 40px 32px;
-  background: #111;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 12px;
   max-width: 540px;
   width: 100%;
@@ -2578,23 +2858,23 @@ tr.row-loss td {
 }
 .webcard-url {
   font-size: 0.82rem;
-  color: #4f9cf9;
+  color: var(--accent);
   word-break: break-all;
   max-width: 100%;
-  background: #0a1a2e;
-  border: 1px solid #1a3a5c;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
   border-radius: 6px;
   padding: 8px 12px;
   font-family: monospace;
 }
 .webcard-note {
   font-size: 0.84rem;
-  color: #666;
+  color: var(--text-3);
   margin: 0;
 }
 .webcard-btn {
   padding: 10px 28px;
-  background: #4f9cf9;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -2604,12 +2884,12 @@ tr.row-loss td {
   transition: background 0.15s;
 }
 .webcard-btn:hover {
-  background: #3b82f6;
+  background: var(--accent-hover);
 }
 
 /* News + Color Rating */
 .news-cell {
-  color: #4ade80;
+  color: var(--news-text);
   font-weight: 600;
 }
 
@@ -2621,16 +2901,16 @@ tr.row-loss td {
   vertical-align: middle;
 }
 .rating-dot--red {
-  background: #ef4444;
+  background: var(--rating-red);
 }
 .rating-dot--orange {
-  background: #f97316;
+  background: var(--rating-orange);
 }
 .rating-dot--yellow {
-  background: #eab308;
+  background: var(--rating-yellow);
 }
 .rating-dot--green {
-  background: #22c55e;
+  background: var(--rating-green);
 }
 
 /* Edit modal — news checkbox */
@@ -2639,19 +2919,19 @@ tr.row-loss td {
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #1e1e1e;
+  background: var(--bg-modal-inner);
   cursor: pointer;
   font-size: 0.88rem;
-  color: #e0e0e0;
+  color: var(--text-1);
   user-select: none;
 }
 .edit-checkbox-field input[type='checkbox'] {
   width: 15px;
   height: 15px;
   cursor: pointer;
-  accent-color: #4f9cf9;
+  accent-color: var(--accent);
 }
 .edit-group--wide {
   flex: 2;
@@ -2665,38 +2945,38 @@ tr.row-loss td {
   flex-wrap: wrap;
 }
 .edit-color-chip {
-  padding: 5px 13px;
-  border-radius: 20px;
-  border: 1px solid #3a3a3a;
-  background: #1e1e1e;
-  color: #999;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--bg-mute);
   cursor: pointer;
-  font-size: 0.83rem;
-  transition: all 0.15s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
 }
-.color-chip--red.active {
-  background: #450a0a;
-  border-color: #ef4444;
-  color: #ef4444;
+.edit-color-chip:hover {
+  transform: scale(1.15);
+  filter: brightness(1.2);
 }
-.color-chip--orange.active {
-  background: #431407;
-  border-color: #f97316;
-  color: #f97316;
+.edit-color-chip.active {
+  border-color: #fff;
+  transform: scale(1.2);
 }
-.color-chip--yellow.active {
-  background: #422006;
-  border-color: #eab308;
-  color: #eab308;
-}
-.color-chip--green.active {
-  background: #052e16;
-  border-color: #22c55e;
-  color: #22c55e;
-}
+.color-chip--red { background: var(--rating-red); }
+.color-chip--orange { background: var(--rating-orange); }
+.color-chip--yellow { background: var(--rating-yellow); }
+.color-chip--green { background: var(--rating-green); }
+
+/* Active glows */
+.color-chip--red.active { box-shadow: 0 0 10px var(--rating-red); }
+.color-chip--orange.active { box-shadow: 0 0 10px var(--rating-orange); }
+.color-chip--yellow.active { box-shadow: 0 0 10px var(--rating-yellow); }
+.color-chip--green.active { box-shadow: 0 0 10px var(--rating-green); }
+
 .edit-color-chip:hover:not(.active) {
-  border-color: #555;
-  color: #ccc;
+  border-color: var(--border);
+  color: var(--text-1);
 }
 .webcard-icon.spinning {
   display: inline-block;
@@ -2708,7 +2988,7 @@ tr.row-loss td {
 }
 .empty-hint {
   font-size: 0.8rem;
-  color: #555;
+  color: var(--text-3);
   font-style: italic;
 }
 
@@ -2721,10 +3001,10 @@ tr.row-loss td {
 }
 .sm-select {
   padding: 6px 12px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #1e1e1e;
-  color: #e0e0e0;
+  background: var(--bg-mute);
+  color: var(--text-1);
   font-size: 0.88rem;
   min-width: 140px;
 }
@@ -2740,35 +3020,36 @@ tr.row-loss td {
   border: 2px solid transparent;
   cursor: pointer;
   transition: all 0.2s;
-  background: #111;
+  background: var(--bg);
   padding: 0;
 }
-.color-filter-chip--red { background: #7f1d1d; border-color: #450a0a; }
-.color-filter-chip--orange { background: #7c2d12; border-color: #431407; }
-.color-filter-chip--yellow { background: #713f12; border-color: #422006; }
-.color-filter-chip--green { background: #064e3b; border-color: #052e16; }
+.color-filter-chip--red { background: var(--rating-red); opacity: 0.6; }
+.color-filter-chip--orange { background: var(--rating-orange); opacity: 0.6; }
+.color-filter-chip--yellow { background: var(--rating-yellow); opacity: 0.6; }
+.color-filter-chip--green { background: var(--rating-green); opacity: 0.6; }
 
 .color-filter-chip.active {
-  border-color: #fff;
+  border-color: var(--text-1);
   transform: scale(1.1);
+  opacity: 1;
 }
-.color-filter-chip--red.active { background: #ef4444; }
-.color-filter-chip--orange.active { background: #f97316; }
-.color-filter-chip--yellow.active { background: #eab308; }
-.color-filter-chip--green.active { background: #22c55e; }
+.color-filter-chip--red.active { background: var(--rating-red); }
+.color-filter-chip--orange.active { background: var(--rating-orange); }
+.color-filter-chip--yellow.active { background: var(--rating-yellow); }
+.color-filter-chip--green.active { background: var(--rating-green); }
 
 /* ── Toggle Group ── */
 .toggle-group {
   display: flex;
-  background: #1a1a1f;
+  background: var(--bg-mute);
   padding: 4px;
   border-radius: 8px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
 }
 .toggle-btn {
   background: transparent;
   border: none;
-  color: #777;
+  color: var(--text-3);
   padding: 6px 12px;
   font-size: 0.8rem;
   font-weight: 600;
@@ -2777,18 +3058,18 @@ tr.row-loss td {
   transition: all 0.2s;
 }
 .toggle-btn.active {
-  background: #2d2d35;
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  background: var(--bg-select);
+  color: var(--text-1);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 .toggle-btn:hover:not(.active) {
-  color: #aaa;
+  color: var(--text-2);
 }
 
 .btn-charts-toggle {
-  background: #1e1e24;
-  border: 1px solid #2d2d35;
-  color: #aaa;
+  background: var(--bg-select-item);
+  border: 1px solid var(--bg-select);
+  color: var(--text-2);
   padding: 6px 14px;
   border-radius: 8px;
   font-size: 0.82rem;
@@ -2797,8 +3078,8 @@ tr.row-loss td {
   margin-left: 8px;
 }
 .btn-charts-toggle:hover {
-  background: #2d2d35;
-  color: #fff;
+  background: var(--bg-select);
+  color: var(--text-1);
 }
 
 /* ── Performance Charts ── */
@@ -2814,16 +3095,16 @@ tr.row-loss td {
   gap: 20px;
 }
 .chart-box {
-  background: #0f0f12;
-  border: 1px solid #1e1e24;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 20px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
 }
 .chart-header {
   font-size: 0.95rem;
   font-weight: 600;
-  color: #e0e0e0;
+  color: var(--text-1);
   margin-bottom: 20px;
   display: flex;
   align-items: center;
@@ -2845,9 +3126,9 @@ tr.row-loss td {
   justify-content: space-between;
 }
 .chart-group-select {
-  background: #1a1a1f;
-  border: 1px solid #333;
-  color: #ccc;
+  background: var(--bg-mute);
+  border: 1px solid var(--border-soft);
+  color: var(--text-2);
   padding: 4px 8px;
   border-radius: 6px;
   font-size: 0.75rem;
@@ -2855,8 +3136,75 @@ tr.row-loss td {
   cursor: pointer;
 }
 .chart-group-select:hover {
-  border-color: #555;
+  border-color: var(--border);
+  color: var(--text-1);
+}
+
+/* ── Pagination ── */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 4px 4px;
+}
+.pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-3);
+}
+.page-size-select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--text-2);
+  padding: 3px 6px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  outline: none;
+}
+.pagination-count {
+  color: var(--text-2);
+}
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.page-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.page-btn:hover:not(:disabled) {
+  background: var(--bg-select);
+  border-color: var(--border);
+  color: var(--text-1);
+}
+.page-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
+  font-weight: 700;
+}
+.page-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.page-ellipsis {
+  color: var(--text-3);
+  font-size: 0.82rem;
+  padding: 0 2px;
 }
 
 </style>

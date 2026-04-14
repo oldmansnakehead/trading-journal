@@ -326,4 +326,24 @@ function runMigrations(db) {
     `)
     setVersion(9)
   }
+
+  // ── v10: isTest column ────────────────────────────────────────────────────
+  if (version < 10) {
+    try {
+      db.exec(`ALTER TABLE Journals ADD COLUMN isTest INTEGER NOT NULL DEFAULT 0`)
+    } catch {
+      // Column might already exist if migration was partially run
+    }
+    setVersion(10)
+  }
+
+  // ── v11: isExcluded column ──────────────────────────────────────────────────
+  if (version < 11) {
+    try {
+      db.exec(`ALTER TABLE Journals ADD COLUMN isExcluded INTEGER NOT NULL DEFAULT 0`)
+    } catch {
+      // Column might already exist if migration was partially run
+    }
+    setVersion(11)
+  }
 }
