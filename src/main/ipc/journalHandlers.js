@@ -23,10 +23,36 @@ const JOURNAL_SELECT = `
 export function registerJournalHandlers() {
   const db = getDb()
 
+  function withImageUrls(rows) {
+    if (!rows.length) return rows
+
+    const ids = rows.map((row) => row.id)
+    const placeholders = ids.map(() => '?').join(',')
+    const imageRows = db
+      .prepare(
+        `SELECT journalId, url
+         FROM Journal_Images
+         WHERE journalId IN (${placeholders})
+         ORDER BY journalId ASC, sortOrder ASC, id ASC`
+      )
+      .all(...ids)
+    const byJournalId = new Map()
+
+    for (const image of imageRows) {
+      if (!byJournalId.has(image.journalId)) byJournalId.set(image.journalId, [])
+      byJournalId.get(image.journalId).push(image.url)
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      imageUrls: byJournalId.get(row.id) ?? []
+    }))
+  }
+
   // ── Create ────────────────────────────────────────────────────────────────
 
   handle('journals:create', (_event, data) => {
-    const { strategyIds = [], customTagIds = [], ...rest } = data
+    const { strategyIds = [], customTagIds = [], imageUrls = [], ...rest } = data
 
     const stmt = db.prepare(`
       INSERT INTO Journals
@@ -42,16 +68,30 @@ export function registerJournalHandlers() {
     const insertTag = db.prepare(
       'INSERT OR IGNORE INTO Journal_CustomTags (journalId, customTagId) VALUES (?, ?)'
     )
+    const insertImage = db.prepare(
+      'INSERT INTO Journal_Images (journalId, url, sortOrder) VALUES (?, ?, ?)'
+    )
 
     const run = db.transaction(() => {
-      const { lastInsertRowid } = stmt.run(rest)
+      const normalizedImageUrls = imageUrls
+        .map((url) => String(url || '').trim())
+        .filter(Boolean)
+      const payload = {
+        ...rest,
+        imageUrl: normalizedImageUrls[0] ?? null
+      }
+      const { lastInsertRowid } = stmt.run(payload)
       for (const sid of strategyIds)  insertLink.run(lastInsertRowid, sid)
       for (const tid of customTagIds) insertTag.run(lastInsertRowid, tid)
+      normalizedImageUrls.forEach((url, index) => {
+        insertImage.run(lastInsertRowid, url, index)
+      })
       return lastInsertRowid
     })
 
     const id = run()
-    return db.prepare(`${JOURNAL_SELECT} WHERE j.id = ? GROUP BY j.id`).get(id)
+    const created = db.prepare(`${JOURNAL_SELECT} WHERE j.id = ? GROUP BY j.id`).get(id)
+    return withImageUrls([created])[0]
   })
 
   // ── Dashboard query with dynamic multi-filters ────────────────────────────
@@ -94,9 +134,10 @@ export function registerJournalHandlers() {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-    return db
+    const rows = db
       .prepare(`${JOURNAL_SELECT} ${where} GROUP BY j.id ORDER BY j.entryDateTime ASC`)
       .all(...params)
+    return withImageUrls(rows)
   })
 
   // ── Summary stats ─────────────────────────────────────────────────────────

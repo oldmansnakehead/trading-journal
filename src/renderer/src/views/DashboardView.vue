@@ -215,19 +215,62 @@ function toggleSymbolOption(sym) {
   else filters.value.symbols.splice(idx, 1)
 }
 
+function normalizeThaiDateInput(raw) {
+  const digits = raw.replace(/\D/g, '').slice(0, 8)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`
+}
+
+function onFilterDateInput(field, e) {
+  filters.value[field] = normalizeThaiDateInput(e.target.value)
+}
+
+function parseThaiDisplayDateToIso(displayDate) {
+  if (!displayDate) return null
+  const m = displayDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!m) return null
+
+  const day = Number(m[1])
+  const month = Number(m[2])
+  const buddhistYear = Number(m[3])
+  const year = buddhistYear - 543
+
+  const d = new Date(year, month - 1, day)
+  if (
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) {
+    return null
+  }
+
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 // ── Query ─────────────────────────────────────────────────────────────────────
 async function runQuery() {
   isLoading.value = true
   loadError.value = ''
   try {
+    const isoFrom = parseThaiDisplayDateToIso(filters.value.dateFrom)
+    const isoTo = parseThaiDisplayDateToIso(filters.value.dateTo)
+
+    if (filters.value.dateFrom && !isoFrom) {
+      throw new Error('Date From ต้องเป็นรูปแบบ dd/mm/yyyy (พ.ศ.)')
+    }
+    if (filters.value.dateTo && !isoTo) {
+      throw new Error('Date To ต้องเป็นรูปแบบ dd/mm/yyyy (พ.ศ.)')
+    }
+
     const f = {
       sessions: [...filters.value.sessions],
       rrTypes: [...filters.value.rrTypes],
       symbols: [...filters.value.symbols],
       setupId: filters.value.setupId ? Number(filters.value.setupId) : null,
       strategyId: filters.value.strategyId ? Number(filters.value.strategyId) : null,
-      dateFrom: filters.value.dateFrom || null,
-      dateTo: filters.value.dateTo || null
+      dateFrom: isoFrom ? `${isoFrom}T00:00` : null,
+      dateTo: isoTo ? `${isoTo}T23:59` : null
     }
     const [rows, stat] = await Promise.all([
       window.api.queryJournals(f),
@@ -379,11 +422,23 @@ const winRateDisplay = computed(() =>
         </div>
         <div class="filter-group sm">
           <div class="filter-label">Date From</div>
-          <input v-model="filters.dateFrom" type="datetime-local" />
+          <input
+            :value="filters.dateFrom"
+            type="text"
+            placeholder="dd/mm/yyyy"
+            maxlength="10"
+            @input="onFilterDateInput('dateFrom', $event)"
+          />
         </div>
         <div class="filter-group sm">
           <div class="filter-label">Date To</div>
-          <input v-model="filters.dateTo" type="datetime-local" />
+          <input
+            :value="filters.dateTo"
+            type="text"
+            placeholder="dd/mm/yyyy"
+            maxlength="10"
+            @input="onFilterDateInput('dateTo', $event)"
+          />
         </div>
       </div>
 
@@ -763,7 +818,7 @@ const winRateDisplay = computed(() =>
 }
 
 select,
-input[type='datetime-local'] {
+input[type='text'] {
   padding: 7px 10px;
   border: 1px solid #333;
   border-radius: 6px;

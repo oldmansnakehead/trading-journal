@@ -1,11 +1,21 @@
 import { ipcMain, dialog, app } from 'electron'
 import { join } from 'path'
-import { writeFileSync, copyFileSync } from 'fs'
+import { writeFileSync, copyFileSync, rmSync } from 'fs'
 import { getDb, closeDb } from '../database/index.js'
 
 function handle(channel, fn) {
   ipcMain.removeHandler(channel)
   ipcMain.handle(channel, fn)
+}
+
+function removeSqliteSidecarFiles(dbPath) {
+  for (const suffix of ['-wal', '-shm']) {
+    try {
+      rmSync(`${dbPath}${suffix}`, { force: true })
+    } catch {
+      // Ignore if sidecar files do not exist or are already removed.
+    }
+  }
 }
 
 export function registerAppHandlers() {
@@ -34,7 +44,11 @@ export function registerAppHandlers() {
       title: 'Export Database'
     })
     if (canceled || !filePath) return { ok: false }
-    copyFileSync(getDb().name, filePath)
+    const db = getDb()
+    // Ensure latest WAL pages are merged into the main db file before copying.
+    db.pragma('wal_checkpoint(TRUNCATE)')
+    copyFileSync(db.name, filePath)
+    removeSqliteSidecarFiles(filePath)
     return { ok: true, path: filePath }
   })
 
@@ -48,7 +62,9 @@ export function registerAppHandlers() {
     if (canceled || !filePaths.length) return { ok: false }
     const destPath = getDb().name
     closeDb()
+    removeSqliteSidecarFiles(destPath)
     copyFileSync(filePaths[0], destPath)
+    removeSqliteSidecarFiles(destPath)
     app.relaunch()
     app.exit(0)
     return { ok: true }

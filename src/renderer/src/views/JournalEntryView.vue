@@ -18,6 +18,7 @@ const allSetupSessions = ref([])   // all sessions across all setups (for global
 const customTags        = ref([])
 const customColumnName  = ref('Custom Tag')
 const selectedCustomTagIds = ref([])
+const imageUrlInputs = ref([''])
 
 const submitMsg          = ref('')
 const submitError        = ref('')
@@ -141,10 +142,56 @@ function toggleCustomTag(id) {
   else selectedCustomTagIds.value.splice(idx, 1)
 }
 
+function addImageUrlField() {
+  imageUrlInputs.value.push('')
+}
+
+function removeImageUrlField(index) {
+  if (imageUrlInputs.value.length === 1) {
+    imageUrlInputs.value[0] = ''
+    return
+  }
+  imageUrlInputs.value.splice(index, 1)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function normalizeThaiDateInput(raw) {
+  const digits = raw.replace(/\D/g, '').slice(0, 8)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`
+}
+
+function onDateInput(field, e) {
+  form.value[field] = normalizeThaiDateInput(e.target.value)
+}
+
+function parseThaiDisplayDate(displayDate) {
+  if (!displayDate) return null
+  const m = displayDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!m) return null
+
+  const day = Number(m[1])
+  const month = Number(m[2])
+  const buddhistYear = Number(m[3])
+  const year = buddhistYear - 543
+
+  const d = new Date(year, month - 1, day)
+  if (
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) {
+    return null
+  }
+
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 function buildIso(date, time) {
-  if (!date) return null
-  return time ? `${date}T${time}` : `${date}T00:00`
+  const isoDate = parseThaiDisplayDate(date)
+  if (!isoDate) return null
+  return time ? `${isoDate}T${time}` : `${isoDate}T00:00`
 }
 
 function onTimeInput(field, e) {
@@ -168,6 +215,14 @@ async function handleSubmit() {
     submitError.value = 'กรุณากรอกวันและเวลา Entry'
     return
   }
+  if (!parseThaiDisplayDate(form.value.entryDate)) {
+    submitError.value = 'รูปแบบวันที่ Entry ต้องเป็น dd/mm/yyyy (พ.ศ.)'
+    return
+  }
+  if (form.value.exitDate && !parseThaiDisplayDate(form.value.exitDate)) {
+    submitError.value = 'รูปแบบวันที่ Exit ต้องเป็น dd/mm/yyyy (พ.ศ.)'
+    return
+  }
   if (!form.value.symbol) {
     submitError.value = 'กรุณาเลือก Symbol'
     return
@@ -175,6 +230,21 @@ async function handleSubmit() {
 
   isSubmitting.value = true
   try {
+    const imageUrls = imageUrlInputs.value
+      .map((url) => url.trim())
+      .filter(Boolean)
+
+    for (const url of imageUrls) {
+      try {
+        const parsed = new URL(url)
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('invalid-protocol')
+      } catch {
+        submitError.value = `ลิงก์รูปไม่ถูกต้อง: ${url}`
+        isSubmitting.value = false
+        return
+      }
+    }
+
     await window.api.createJournal({
       entryDateTime: buildIso(form.value.entryDate, form.value.entryTime),
       exitDateTime:  buildIso(form.value.exitDate,  form.value.exitTime),
@@ -187,15 +257,15 @@ async function handleSubmit() {
       slPoint:       form.value.slPoint !== '' ? parseFloat(form.value.slPoint) : null,
       tpPoint:       form.value.tpPoint !== '' ? parseFloat(form.value.tpPoint) : null,
       result:        form.value.result,
-      imageUrl:      null,
+      imageUrls,
       notes:         form.value.notes || null,
       setupId:       Number(form.value.setupId),
-      strategyIds:   selectedStrategyIds.value,
-      customTagIds:  selectedCustomTagIds.value
+      // Convert Vue reactive arrays into plain arrays for Electron IPC structured clone.
+      strategyIds:   [...selectedStrategyIds.value],
+      customTagIds:  [...selectedCustomTagIds.value]
     })
 
-    submitMsg.value = 'บันทึกการเทรดเรียบร้อย!'
-    resetForm()
+    submitMsg.value = 'บันทึกการเทรดเรียบร้อย! (ฟอร์มคงค่าเดิมไว้)'
   } catch (err) {
     submitError.value = err.message ?? 'บันทึกไม่สำเร็จ'
   } finally {
@@ -215,6 +285,7 @@ function resetForm() {
   setupSessions.value       = []
   sessionAutoDetected.value = false
   selectedCustomTagIds.value = []
+  imageUrlInputs.value = ['']
 }
 </script>
 
@@ -229,7 +300,14 @@ function resetForm() {
         <div class="form-group datetime-group">
           <label>Entry Date &amp; Time *</label>
           <div class="dt-inputs">
-            <input v-model="form.entryDate" type="date" required />
+            <input
+              :value="form.entryDate"
+              type="text"
+              placeholder="dd/mm/yyyy"
+              maxlength="10"
+              required
+              @input="onDateInput('entryDate', $event)"
+            />
             <input
               :value="form.entryTime"
               type="text" placeholder="HH:MM" maxlength="5"
@@ -242,7 +320,13 @@ function resetForm() {
         <div class="form-group datetime-group">
           <label>Exit Date &amp; Time</label>
           <div class="dt-inputs">
-            <input v-model="form.exitDate" type="date" />
+            <input
+              :value="form.exitDate"
+              type="text"
+              placeholder="dd/mm/yyyy"
+              maxlength="10"
+              @input="onDateInput('exitDate', $event)"
+            />
             <input
               :value="form.exitTime"
               type="text" placeholder="HH:MM" maxlength="5"
@@ -364,6 +448,22 @@ function resetForm() {
 
       <!-- Notes -->
       <div class="form-group full-width">
+        <label>Image URL(s)</label>
+        <div class="image-url-list">
+          <div v-for="(_, idx) in imageUrlInputs" :key="idx" class="image-url-row">
+            <input
+              v-model.trim="imageUrlInputs[idx]"
+              type="url"
+              placeholder="https://example.com/image.png"
+            />
+            <button type="button" class="btn-url-remove" @click="removeImageUrlField(idx)">Remove</button>
+          </div>
+          <button type="button" class="btn-url-add" @click="addImageUrlField">+ Add Image URL</button>
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div class="form-group full-width">
         <label>Notes</label>
         <textarea v-model="form.notes" rows="3" placeholder="Optional trade notes…"></textarea>
       </div>
@@ -403,7 +503,7 @@ label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase;
 .auto-tag { font-weight: 400; text-transform: none; color: #4f9cf9; margin-left: 4px; }
 
 .dt-inputs { display: flex; gap: 8px; }
-.dt-inputs input[type="date"] { flex: 3; min-width: 0; }
+.dt-inputs input:first-child { flex: 3; min-width: 0; }
 .dt-inputs .time-input        { flex: 0 0 72px; text-align: center; letter-spacing: 0.05em; }
 
 .session-select.session-detected { color: #4ade80; border-color: #166534; }
@@ -412,7 +512,6 @@ input, select, textarea {
   padding: 8px 10px; border: 1px solid #333; border-radius: 6px;
   background: #1e1e1e; color: #e0e0e0; font-size: 0.9rem; transition: border-color .2s;
 }
-input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: #4f9cf9; }
 input:disabled, select:disabled { opacity: 0.4; cursor: not-allowed; }
 textarea { resize: vertical; }
@@ -441,4 +540,30 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .tag-chip--blue.active { background: #0f2a4a; border-color: #4f9cf9; color: #4f9cf9; }
 .tag-chip:hover:not(.active) { border-color: #555; color: #ccc; }
 .tag-empty { font-size: 0.82rem; color: #555; font-style: italic; }
+
+.image-url-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.image-url-row {
+  display: flex;
+  gap: 8px;
+}
+.image-url-row input {
+  flex: 1;
+}
+.btn-url-add,
+.btn-url-remove {
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #252525;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 6px 12px;
+}
+.btn-url-add {
+  align-self: flex-start;
+}
 </style>

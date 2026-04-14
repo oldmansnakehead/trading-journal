@@ -10,7 +10,9 @@ export function getDbPath() {
   try {
     const config = JSON.parse(readFileSync(configPath, 'utf8'))
     if (config.dbFolder) return join(config.dbFolder, 'trading-journal.db')
-  } catch (_) {}
+  } catch {
+    // Ignore malformed/missing config and use default path.
+  }
   return join(app.getPath('userData'), 'trading-journal.db')
 }
 
@@ -106,10 +108,19 @@ function runMigrations(db) {
   // ── v2: Add Symbols, Journal_Strategies, new Journals columns ─────────────
   // (for databases created with the old v1 schema before this migration)
   if (version < 2) {
+    const journalColumns = db
+      .prepare(`PRAGMA table_info(Journals)`)
+      .all()
+      .map((col) => col.name)
+    const hasLegacyStrategyId = journalColumns.includes('strategyId')
+
     // Disable FK checks during table reconstruction
     db.pragma('foreign_keys = OFF')
 
     db.exec(`
+      DROP TABLE IF EXISTS Journals_new;
+      DROP TABLE IF EXISTS Journal_Strategies_tmp;
+
       CREATE TABLE IF NOT EXISTS Symbols (
         id   INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE
@@ -146,10 +157,17 @@ function runMigrations(db) {
         strategyId INTEGER,
         PRIMARY KEY (journalId, strategyId)
       );
+    `)
 
-      INSERT OR IGNORE INTO Journal_Strategies_tmp (journalId, strategyId)
-      SELECT id, strategyId FROM Journals WHERE strategyId IS NOT NULL;
+    if (hasLegacyStrategyId) {
+      db.exec(`
+        INSERT OR IGNORE INTO Journal_Strategies_tmp (journalId, strategyId)
+        SELECT id, strategyId FROM Journals
+        WHERE strategyId IS NOT NULL;
+      `)
+    }
 
+    db.exec(`
       DROP TABLE Journals;
       ALTER TABLE Journals_new RENAME TO Journals;
 
@@ -190,7 +208,11 @@ function runMigrations(db) {
     `)
 
     // ADD COLUMN is safe on existing DB — silently skip if already present
-    try { db.exec(`ALTER TABLE Journals ADD COLUMN directionBias TEXT`) } catch (_) {}
+    try {
+      db.exec(`ALTER TABLE Journals ADD COLUMN directionBias TEXT`)
+    } catch {
+      // Column already exists on upgraded databases.
+    }
 
     setVersion(3)
   }
@@ -213,5 +235,36 @@ function runMigrations(db) {
       INSERT OR IGNORE INTO Settings (key, value) VALUES ('customColumnName', 'Custom Tag');
     `)
     setVersion(4)
+  }
+
+  // ── v5: Multiple image URLs per journal ────────────────────────────────────
+  if (version < 5) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS Journal_Images (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        journalId INTEGER NOT NULL REFERENCES Journals(id) ON DELETE CASCADE,
+        url       TEXT    NOT NULL,
+        sortOrder INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_journal_images_journalId
+        ON Journal_Images(journalId);
+    `)
+
+    // Backfill legacy single imageUrl data into the new table.
+    db.exec(`
+      INSERT INTO Journal_Images (journalId, url, sortOrder)
+      SELECT j.id, j.imageUrl, 0
+      FROM Journals j
+      WHERE j.imageUrl IS NOT NULL
+        AND TRIM(j.imageUrl) <> ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM Journal_Images ji
+          WHERE ji.journalId = j.id
+        );
+    `)
+
+    setVersion(5)
   }
 }

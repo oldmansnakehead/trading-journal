@@ -1,6 +1,7 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { autoUpdater } from 'electron-updater'
 import icon from '../../resources/icon.png?asset'
 
 app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication')
@@ -12,6 +13,41 @@ import { registerJournalHandlers } from './ipc/journalHandlers.js'
 import { registerSymbolHandlers } from './ipc/symbolHandlers.js'
 import { registerCustomTagHandlers } from './ipc/customTagHandlers.js'
 import { registerAppHandlers } from './ipc/appHandlers.js'
+
+function setupAutoUpdater() {
+  if (is.dev) return
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('error', (err) => {
+    console.error('[AutoUpdater] Error:', err)
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[AutoUpdater] Update available: ${info.version}`)
+  })
+
+  autoUpdater.on('update-downloaded', async (info) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Update Ready',
+      message: `Version ${info.version} has been downloaded.`,
+      detail: 'The app will restart to install the update.',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    })
+
+    if (response === 0) {
+      autoUpdater.quitAndInstall()
+    }
+  })
+
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[AutoUpdater] Failed to check updates:', err)
+  })
+}
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -64,6 +100,7 @@ app.whenReady().then(() => {
   }
 
   createWindow()
+  setupAutoUpdater()
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
