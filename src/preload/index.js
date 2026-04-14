@@ -66,7 +66,8 @@ const api = {
   deleteJournal: (id) => ipcRenderer.invoke('journals:delete', id),
   queryJournals: (filters) => ipcRenderer.invoke('journals:query', filters),
   getJournalSummary: (filters) => ipcRenderer.invoke('journals:getSummary', filters),
-  getDistinctSymbols: () => ipcRenderer.invoke('journals:getDistinctSymbols')
+  getDistinctSymbols: () => ipcRenderer.invoke('journals:getDistinctSymbols'),
+  bulkCreateJournals: (dataArray) => ipcRenderer.invoke('journals:bulkCreate', dataArray)
 }
 
 if (process.contextIsolated) {

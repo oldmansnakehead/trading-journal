@@ -3,11 +3,15 @@ import { ref } from 'vue'
 import JournalEntryView  from './views/JournalEntryView.vue'
 import DashboardView     from './views/DashboardView.vue'
 import SetupManagerView  from './views/SetupManagerView.vue'
+import CalculatorView    from './views/CalculatorView.vue'
+import ImportView        from './views/ImportView.vue'
 
 const tabs = [
   { id: 'journal',  label: '+ Log Trade',  icon: '📝' },
   { id: 'dashboard', label: 'Dashboard',   icon: '📊' },
-  { id: 'manager',  label: 'Setup Manager', icon: '⚙️' }
+  { id: 'manager',  label: 'Setup Manager', icon: '⚙️' },
+  { id: 'calculator', label: 'Calculator',   icon: '🧮' },
+  { id: 'import',    label: 'Import JSON',   icon: '📥' }
 ]
 
 const activeTab = ref('journal')
@@ -15,7 +19,9 @@ const activeTab = ref('journal')
 const viewMap = {
   journal:   JournalEntryView,
   dashboard: DashboardView,
-  manager:   SetupManagerView
+  manager:   SetupManagerView,
+  calculator: CalculatorView,
+  import:    ImportView
 }
 </script>
 

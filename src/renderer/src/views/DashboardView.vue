@@ -91,6 +91,7 @@ const customColumnName = ref('Custom Tag')
 const dbPath = ref('')
 
 const showCharts = ref(false) // toggle visibility
+const returnType = ref('simple') // 'simple' or 'log'
 const pnlGroupBy = ref('day') // day, symbol, session, rrType, rating, news
 const equityChartCanvas = ref(null)
 const drawdownChartCanvas = ref(null)
@@ -146,7 +147,8 @@ watch([initialBalance, riskPercent], saveSettings)
 
 // ── RR Helpers ────────────────────────────────────────────────────────────────
 function parseRR(rrType) {
-  const m = rrType?.match(/1:(\d+)/)
+  // Supports "1:2" or "Fixed 2R" or just "2"
+  const m = rrType?.match(/(?:1:)?(\d+(?:\.\d+)?)/)
   return m ? Number(m[1]) : 0
 }
 
@@ -162,19 +164,41 @@ function calcRRR(result, rrType) {
 const enrichedRows = computed(() => {
   const bal0 = initialBalance.value
   const riskPct = riskPercent.value / 100
-  const riskAmt = bal0 * riskPct // fixed $ risk per trade
-
+  const riskAmt = bal0 * riskPct // Standard fixed risk amount
   let runningBalance = bal0
   let peakBalance = bal0
+  let cumLogReturn = 0
 
   return results.value.map((row, i) => {
     const { risk, reward, rrr } = calcRRR(row.result, row.rrType)
-    const dollarPnl = +(rrr * riskAmt).toFixed(2)
-    const pctPnl = +((dollarPnl / bal0) * 100).toFixed(2)
 
-    runningBalance = +(runningBalance + dollarPnl).toFixed(2)
+    // 1. Simple PnL (Fixed $ risk)
+    const simpleDollarPnl = +(rrr * riskAmt).toFixed(2)
+
+    // 2. Log PnL (Compounding)
+    // Risk per trade as fractional (e.g. 0.01 for 1%)
+    // Reward multiplier is rrr
+    const tradePctReturn = rrr * riskPct // e.g. 2RR * 0.01 = 0.02 (2%)
+    const logTradeReturn = Math.log(1 + tradePctReturn)
+    cumLogReturn += logTradeReturn
+
+    // Determine values based on returnType
+    let dollarPnl, currentBalance
+    if (returnType.value === 'log') {
+      currentBalance = +(bal0 * Math.exp(cumLogReturn)).toFixed(2)
+      // The "dollar PnL" for this specific trade in log mode is the change in balance
+      const prevBal = i === 0 ? bal0 : 0 // will be calculated below
+      // Actually simpler:
+      dollarPnl = +(currentBalance - runningBalance).toFixed(2)
+    } else {
+      dollarPnl = simpleDollarPnl
+      currentBalance = +(runningBalance + dollarPnl).toFixed(2)
+    }
+
+    runningBalance = currentBalance
     if (runningBalance > peakBalance) peakBalance = runningBalance
     const drawdown = +((runningBalance / peakBalance - 1) * 100).toFixed(2)
+    const pctPnl = +((dollarPnl / bal0) * 100).toFixed(2)
 
     // Holding time
     let holding = '—'
@@ -918,6 +942,26 @@ function openInBrowser(url) {
           >Risk $: <strong>${{ ((initialBalance * riskPercent) / 100).toFixed(2) }}</strong></span
         >
       </div>
+
+      <div class="setting-item">
+        <label>Return Calculation</label>
+        <div class="toggle-group">
+          <button
+            class="toggle-btn"
+            :class="{ active: returnType === 'simple' }"
+            @click="returnType = 'simple'"
+          >
+            Simple
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: returnType === 'log' }"
+            @click="returnType = 'log'"
+          >
+            Log (Compounded)
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ── Database Management ───────────────────────────────────────────── -->
@@ -1271,7 +1315,7 @@ function openInBrowser(url) {
             <td :class="row.drawdown < 0 ? 'neg' : ''">{{ row.drawdown }}%</td>
             <td>{{ row.setupName || '—' }}</td>
             <td>{{ row.strategyNames || '—' }}</td>
-            <td>{{ row.customTagNames || '—' }}</td>
+            <td>{{ row.timeBos || row.customTagNames || '—' }}</td>
             <td class="news-cell">{{ row.hasNews ? '✓' : '—' }}</td>
             <td>
               <span
@@ -2668,6 +2712,34 @@ tr.row-loss td {
 .color-filter-chip--orange.active { background: #f97316; }
 .color-filter-chip--yellow.active { background: #eab308; }
 .color-filter-chip--green.active { background: #22c55e; }
+
+/* ── Toggle Group ── */
+.toggle-group {
+  display: flex;
+  background: #1a1a1f;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid #333;
+}
+.toggle-btn {
+  background: transparent;
+  border: none;
+  color: #777;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.toggle-btn.active {
+  background: #2d2d35;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.toggle-btn:hover:not(.active) {
+  color: #aaa;
+}
 
 .btn-charts-toggle {
   background: #1e1e24;

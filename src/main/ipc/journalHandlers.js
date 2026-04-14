@@ -57,10 +57,10 @@ export function registerJournalHandlers() {
     const stmt = db.prepare(`
       INSERT INTO Journals
         (entryDateTime, exitDateTime, symbol, session, position, tf,
-         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating)
+         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
       VALUES
         (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
-         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating)
+         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
     `)
     const insertLink = db.prepare(
       'INSERT OR IGNORE INTO Journal_Strategies (journalId, strategyId) VALUES (?, ?)'
@@ -92,6 +92,59 @@ export function registerJournalHandlers() {
     const id = run()
     const created = db.prepare(`${JOURNAL_SELECT} WHERE j.id = ? GROUP BY j.id`).get(id)
     return withImageUrls([created])[0]
+  })
+
+  handle('journals:bulkCreate', (_event, dataArray) => {
+    if (!Array.isArray(dataArray)) return { count: 0 }
+
+    const stmt = db.prepare(`
+      INSERT INTO Journals
+        (entryDateTime, exitDateTime, symbol, session, position, tf,
+         rrType, result, slPoint, tpPoint, imageUrl, notes, setupId, directionBias, hasNews, colorRating, timeBos)
+      VALUES
+        (@entryDateTime, @exitDateTime, @symbol, @session, @position, @tf,
+         @rrType, @result, @slPoint, @tpPoint, @imageUrl, @notes, @setupId, @directionBias, @hasNews, @colorRating, @timeBos)
+    `)
+    const insertImage = db.prepare('INSERT INTO Journal_Images (journalId, url, sortOrder) VALUES (?, ?, ?)')
+    const getTagStmt = db.prepare('SELECT id FROM CustomTags WHERE name = ?')
+    const insTagStmt = db.prepare('INSERT INTO CustomTags (name) VALUES (?)')
+    const linkJournalTag = db.prepare('INSERT OR IGNORE INTO Journal_CustomTags (journalId, customTagId) VALUES (?, ?)')
+    const linkSetupTag = db.prepare('INSERT OR IGNORE INTO Setup_CustomTags (setupId, customTagId) VALUES (?, ?)')
+    
+    const runBulk = db.transaction((rows) => {
+      let count = 0
+      for (const row of rows) {
+        const { imageUrls = [], timeBos, setupId, ...rest } = row
+        const normalizedImageUrls = imageUrls.map(url => String(url || '').trim()).filter(Boolean)
+        const payload = { ...rest, timeBos, setupId, imageUrl: normalizedImageUrls[0] ?? null }
+        
+        const { lastInsertRowid } = stmt.run(payload)
+        
+        // Handle Custom Tag for timeBos
+        if (timeBos != null && String(timeBos).trim() !== '') {
+          const tagName = String(timeBos).trim()
+          let tagIdRow = getTagStmt.get(tagName)
+          let tagId
+          if (!tagIdRow) {
+            const info = insTagStmt.run(tagName)
+            tagId = info.lastInsertRowid
+          } else {
+            tagId = tagIdRow.id
+          }
+          linkJournalTag.run(lastInsertRowid, tagId)
+          linkSetupTag.run(setupId, tagId)
+        }
+
+        normalizedImageUrls.forEach((url, index) => {
+          insertImage.run(lastInsertRowid, url, index)
+        })
+        count++
+      }
+      return count
+    })
+
+    const totalCreated = runBulk(dataArray)
+    return { count: totalCreated }
   })
 
   // ── Dashboard query with dynamic multi-filters ────────────────────────────
@@ -216,6 +269,7 @@ export function registerJournalHandlers() {
         directionBias = @directionBias,
         hasNews       = @hasNews,
         colorRating   = @colorRating,
+        timeBos       = @timeBos,
         updatedAt     = datetime('now')
       WHERE id = @id
     `)

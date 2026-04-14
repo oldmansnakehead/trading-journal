@@ -91,6 +91,24 @@ watch(
   }
 )
 
+// ── Auto-sync entry to exit date & time ───────────────────────────────────────
+watch(
+  () => form.value.entryDate,
+  (newVal, oldVal) => {
+    if (newVal && (!form.value.exitDate || form.value.exitDate === oldVal)) {
+      form.value.exitDate = newVal
+    }
+  }
+)
+watch(
+  () => form.value.entryTime,
+  (newVal, oldVal) => {
+    if (newVal && (!form.value.exitTime || form.value.exitTime === oldVal)) {
+      form.value.exitTime = newVal
+    }
+  }
+)
+
 // ── Auto-detect session whenever entryTime or setupSessions changes ───────────
 watch([() => form.value.entryTime, setupSessions], ([time]) => {
   const detected = detectSession(time)
