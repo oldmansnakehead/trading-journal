@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onActivated, watch, nextTick, onUnmounted } from 'vue'
+import LogTradeForm from '../components/LogTradeForm.vue'
 import {
   Chart,
   LineController,
@@ -34,6 +35,12 @@ const POSITIONS = ['Buy', 'Sell']
 const DIRECTION_BIAS = ['Bullish', 'Bearish']
 const TF_OPTIONS = ['M1', 'M3', 'M5', 'M15', 'M30', 'H1', 'H4']
 const RESULTS = ['Win', 'Loss', 'Breakeven']
+
+// ── Add Trade Modal ───────────────────────────────────────────────────────────
+const showAddModal = ref(false)
+function onTradeSubmitted() {
+  runQuery()
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const setups = ref([])
@@ -289,18 +296,58 @@ const sortedRows = computed(() => {
   })
 })
 
-const totalPages = computed(() => Math.ceil(sortedRows.value.length / pageSize.value) || 1)
+// ── Table Search ──────────────────────────────────────────────────────────────
+const tableSearch = ref('')
+
+const filteredRows = computed(() => {
+  const q = tableSearch.value.trim().toLowerCase()
+  if (!q) return sortedRows.value
+  return sortedRows.value.filter((row) => {
+    return [
+      row.no,
+      row.symbol,
+      row.session,
+      row.position,
+      row.directionBias,
+      row.tf,
+      row.result,
+      row.setupName,
+      row.strategyNames,
+      row.timeBos,
+      row.customTagNames,
+      row.notes,
+      row.rrType,
+      row.rrTypeName,
+      row.dollarPnl,
+      row.pctPnl,
+      row.rrr,
+      row.slPoint,
+      row.tpPoint,
+      row.balance,
+      row.drawdown,
+      row.holding,
+      row.hasNews ? 'news' : '',
+      row.colorRating,
+      row.entryDateTime ? fmtDate(row.entryDateTime) : '',
+      row.exitDateTime  ? fmtDate(row.exitDateTime)  : '',
+      row.entryDateTime ? fmtTime(row.entryDateTime) : '',
+      row.exitDateTime  ? fmtTime(row.exitDateTime)  : '',
+    ].some((v) => v != null && String(v).toLowerCase().includes(q))
+  })
+})
+
+const totalPages = computed(() => Math.ceil(filteredRows.value.length / pageSize.value) || 1)
 
 const paginatedRows = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
-  return sortedRows.value.slice(start, start + pageSize.value)
+  return filteredRows.value.slice(start, start + pageSize.value)
 })
 
 function goToPage(p) {
   currentPage.value = Math.max(1, Math.min(p, totalPages.value))
 }
 
-watch([sortedRows, pageSize], () => {
+watch([filteredRows, pageSize], () => {
   currentPage.value = 1
 })
 
@@ -1390,6 +1437,25 @@ function openInBrowser(url) {
           :title="sortDir === 'asc' ? 'Ascending' : 'Descending'"
           @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'"
         >{{ sortDir === 'asc' ? '↑ Asc' : '↓ Desc' }}</button>
+
+        <button class="btn-add-trade" @click="showAddModal = true">+ Add Trade</button>
+
+        <div class="table-search-wrap">
+          <input
+            v-model="tableSearch"
+            class="table-search-input"
+            placeholder="Search in table…"
+            type="text"
+          />
+          <button v-if="tableSearch" class="table-search-clear" @click="tableSearch = ''">
+            <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="10" height="10">
+              <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+        <span v-if="tableSearch" class="search-result-count">
+          {{ filteredRows.length }} / {{ sortedRows.length }}
+        </span>
       </div>
 
       <table v-if="sortedRows.length">
@@ -1899,6 +1965,21 @@ function openInBrowser(url) {
       </div>
     </div>
   </teleport>
+
+  <!-- ── Add Trade Modal ──────────────────────────────────────────────────── -->
+  <Teleport to="body">
+    <div v-show="showAddModal" class="add-modal-overlay" @click.self="showAddModal = false">
+      <div class="add-modal-box">
+        <div class="add-modal-header">
+          <h3>New Journal Entry</h3>
+          <button class="add-modal-close" @click="showAddModal = false">✕</button>
+        </div>
+        <div class="add-modal-body">
+          <LogTradeForm @submitted="onTradeSubmitted" />
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -2402,13 +2483,68 @@ tr.row-excluded {
 .sort-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 12px 16px;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
   background: var(--bg-soft);
   border: 1px solid var(--border);
   border-radius: 10px;
-  width: fit-content;
+  flex-wrap: wrap;
+}
+.table-search-wrap {
+  display: flex;
+  align-items: center;
+  position: relative;
+  margin-left: auto;
+}
+.table-search-icon {
+  position: absolute;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.table-search-input {
+  padding: 6px 30px 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-1);
+  font-size: 0.82rem;
+  width: 210px;
+  outline: none;
+  transition: border-color 0.15s, width 0.2s, box-shadow 0.15s;
+}
+.table-search-input::placeholder { color: var(--text-3); }
+.table-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+  width: 270px;
+}
+.table-search-clear {
+  position: absolute;
+  right: 7px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.table-search-clear:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+.search-result-count {
+  font-size: 0.78rem;
+  color: var(--text-3);
+  white-space: nowrap;
 }
 .sort-bar-label {
   font-size: 0.75rem;
@@ -3207,4 +3343,71 @@ tr.row-excluded {
   padding: 0 2px;
 }
 
+/* ── Add Trade Button ─────────────────────────────────────────────────────── */
+.btn-add-trade {
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-add-trade:hover {
+  opacity: 0.88;
+}
+
+/* ── Add Trade Modal ──────────────────────────────────────────────────────── */
+.add-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.add-modal-box {
+  background: var(--bg-modal);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  width: min(860px, 95vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+.add-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.add-modal-header h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+.add-modal-close {
+  background: none;
+  border: none;
+  font-size: 1rem;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.add-modal-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.add-modal-body {
+  overflow-y: auto;
+  padding: 20px;
+  flex: 1;
+}
 </style>
