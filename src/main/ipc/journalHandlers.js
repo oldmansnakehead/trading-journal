@@ -164,8 +164,12 @@ export function registerJournalHandlers() {
       symbols = [],
       setupId,
       strategyId,
+      strategyIds = [],
       customTagId,
+      customTagIds = [],
       hasNews,
+      isTest,
+      isExcluded,
       colorRatings = [],
       dateFrom,
       dateTo
@@ -194,17 +198,31 @@ export function registerJournalHandlers() {
       conditions.push('j.setupId = ?')
       params.push(setupId)
     }
-    if (strategyId) {
+    if (strategyIds.length > 0) {
+      conditions.push(`j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId IN (${strategyIds.map(() => '?').join(',')}))`)
+      params.push(...strategyIds)
+    } else if (strategyId) {
       conditions.push('j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId = ?)')
       params.push(strategyId)
     }
-    if (customTagId) {
+    if (customTagIds.length > 0) {
+      conditions.push(`j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId IN (${customTagIds.map(() => '?').join(',')}))`)
+      params.push(...customTagIds)
+    } else if (customTagId) {
       conditions.push('j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId = ?)')
       params.push(customTagId)
     }
     if (hasNews !== null && hasNews !== undefined) {
       conditions.push('j.hasNews = ?')
       params.push(Number(hasNews))
+    }
+    if (isTest !== null && isTest !== undefined) {
+      conditions.push('COALESCE(j.isTest, 0) = ?')
+      params.push(isTest ? 1 : 0)
+    }
+    if (isExcluded !== null && isExcluded !== undefined) {
+      conditions.push('COALESCE(j.isExcluded, 0) = ?')
+      params.push(isExcluded ? 1 : 0)
     }
     if (colorRatings.length > 0) {
       conditions.push(`j.colorRating IN (${colorRatings.map(() => '?').join(',')})`)
@@ -224,10 +242,13 @@ export function registerJournalHandlers() {
   handle('journals:query', (_event, filters = {}) => {
     const { conditions, params } = buildFilterConditions(filters)
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-
+    console.log('[query] filters received:', JSON.stringify(filters))
+    console.log('[query] WHERE:', where)
+    console.log('[query] params:', params)
     const rows = db
       .prepare(`${JOURNAL_SELECT} ${where} GROUP BY j.id ORDER BY j.entryDateTime ASC`)
       .all(...params)
+    console.log('[query] result count:', rows.length)
     return withImageUrls(rows)
   })
 

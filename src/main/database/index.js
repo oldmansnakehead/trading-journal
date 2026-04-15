@@ -346,4 +346,13 @@ function runMigrations(db) {
     }
     setVersion(11)
   }
+
+  // ── v12: backfill NULL → 0 for isTest / isExcluded ─────────────────────────
+  if (version < 12) {
+    db.exec(`
+      UPDATE Journals SET isTest = 0 WHERE isTest IS NULL;
+      UPDATE Journals SET isExcluded = 0 WHERE isExcluded IS NULL;
+    `)
+    setVersion(12)
+  }
 }

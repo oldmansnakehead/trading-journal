@@ -54,9 +54,11 @@ const filters = ref({
   rrTypeIds: [],
   symbols: [],
   setupId: '',
-  strategyId: '',
-  customTagId: '',
-  hasNews: null, // null = all, 1 = yes, 0 = no
+  strategyIds: [],
+  customTagIds: [],
+  hasNews: null,    // null = all, 1 = yes, 0 = no
+  isTest: null,     // null = all, true = test only, false = real only
+  isExcluded: null, // null = all, true = excluded only, false = non-excluded only
   colorRatings: [],
   dateFrom: '',
   dateTo: ''
@@ -406,31 +408,43 @@ const enhancedSummary = computed(() => {
 })
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
+const allStrategies = ref([])
+
 onMounted(async () => {
   await loadSettings()
-  const [s, sym, rrTypesList] = await Promise.all([
+  const [s, sym, rrTypesList, allStrat] = await Promise.all([
     window.api.getAllSetups(),
     window.api.getDistinctSymbols(),
-    window.api.getAllRRTypes()
+    window.api.getAllRRTypes(),
+    window.api.getAllStrategies()
   ])
   setups.value = s
   symbolOptions.value = sym
   rrTypeOptions.value = rrTypesList.map((r) => r.name)
   sessionOptions.value = ALL_SESSIONS
+  allStrategies.value = allStrat
+  strategies.value = allStrat
 })
 onActivated(runQuery)
 
 // ── Strategy & Tag dropdown filtered by setup ────────────────────────────────
 async function onSetupChange() {
-  filters.value.strategyId = ''
-  filters.value.customTagId = ''
-  strategies.value = []
+  filters.value.strategyIds = []
+  filters.value.customTagIds = []
   filterCustomTags.value = []
   if (filters.value.setupId) {
-    ;[strategies.value, filterCustomTags.value] = await Promise.all([
+    const [strats, tags] = await Promise.all([
       window.api.getStrategiesForSetup(Number(filters.value.setupId)),
       window.api.getCustomTagsForSetup(Number(filters.value.setupId))
     ])
+    strategies.value = strats
+    filterCustomTags.value = tags.slice().sort((a, b) => {
+      const na = parseFloat(a.name), nb = parseFloat(b.name)
+      if (!isNaN(na) && !isNaN(nb)) return na - nb
+      return a.name.localeCompare(b.name)
+    })
+  } else {
+    strategies.value = allStrategies.value
   }
 }
 
@@ -531,18 +545,22 @@ async function runQuery() {
       rrTypeIds: [...filters.value.rrTypeIds],
       symbols: [...filters.value.symbols],
       setupId: filters.value.setupId ? Number(filters.value.setupId) : null,
-      strategyId: filters.value.strategyId ? Number(filters.value.strategyId) : null,
-      customTagId: filters.value.customTagId ? Number(filters.value.customTagId) : null,
+      strategyIds: filters.value.strategyIds.map(Number),
+      customTagIds: filters.value.customTagIds.map(Number),
       hasNews: filters.value.hasNews,
+      isTest: filters.value.isTest === null ? null : filters.value.isTest === true || filters.value.isTest === 'true',
+      isExcluded: filters.value.isExcluded === null ? null : filters.value.isExcluded === true || filters.value.isExcluded === 'true',
       colorRatings: [...filters.value.colorRatings],
       dateFrom: isoFrom ? `${isoFrom}T00:00` : null,
       dateTo: isoTo ? `${isoTo}T23:59` : null
     }
+    console.log('[filter] sending:', JSON.stringify(f))
     const [rows, stat, allRRTypes] = await Promise.all([
       window.api.queryJournals(f),
       window.api.getJournalSummary(f),
       window.api.getAllRRTypes()
     ])
+    console.log('[filter] got rows:', rows.length, rows[0])
     results.value = rows
     summary.value = stat
     
@@ -792,14 +810,16 @@ function clearFilters() {
     rrTypeIds: [],
     symbols: [],
     setupId: '',
-    strategyId: '',
-    customTagId: '',
+    strategyIds: [],
+    customTagIds: [],
     hasNews: null,
+    isTest: null,
+    isExcluded: null,
     colorRatings: [],
     dateFrom: '',
     dateTo: ''
   }
-  strategies.value = []
+  strategies.value = allStrategies.value
   symbolInput.value = ''
   runQuery()
 }
@@ -1189,6 +1209,24 @@ function openInBrowser(url) {
         </div>
 
         <div class="filter-group">
+          <div class="filter-label">Test Item</div>
+          <select v-model="filters.isTest" class="sm-select">
+            <option :value="null">All</option>
+            <option :value="true">Test Only (🧪)</option>
+            <option :value="false">Real Only</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <div class="filter-label">Excluded</div>
+          <select v-model="filters.isExcluded" class="sm-select">
+            <option :value="null">All</option>
+            <option :value="true">Excluded Only (✖)</option>
+            <option :value="false">Non-Excluded</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
           <div class="filter-label">Rating</div>
           <div class="color-filter-row">
             <button
@@ -1235,19 +1273,32 @@ function openInBrowser(url) {
             <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
         </div>
-        <div class="filter-group sm">
-          <div class="filter-label">Strategy</div>
-          <select v-model="filters.strategyId" :disabled="!filters.setupId">
-            <option value="">All Strategies</option>
-            <option v-for="s in strategies" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
+        <div class="filter-group">
+          <div class="filter-label">Strategy <span v-if="filters.strategyIds.length" class="filter-count">{{ filters.strategyIds.length }}</span></div>
+          <div class="chip-row">
+            <button
+              v-for="s in strategies" :key="s.id"
+              type="button"
+              class="filter-chip"
+              :class="{ active: filters.strategyIds.includes(s.id) }"
+              @click="filters.strategyIds.includes(s.id) ? filters.strategyIds.splice(filters.strategyIds.indexOf(s.id),1) : filters.strategyIds.push(s.id)"
+            >{{ s.name }}</button>
+            <span v-if="!strategies.length" class="empty-hint">No strategies</span>
+          </div>
         </div>
-        <div class="filter-group sm">
-          <div class="filter-label">{{ customColumnName }}</div>
-          <select v-model="filters.customTagId" :disabled="!filters.setupId">
-            <option value="">All {{ customColumnName }}s</option>
-            <option v-for="t in filterCustomTags" :key="t.id" :value="t.id">{{ t.name }}</option>
-          </select>
+        <div class="filter-group">
+          <div class="filter-label">{{ customColumnName }} <span v-if="filters.customTagIds.length" class="filter-count">{{ filters.customTagIds.length }}</span></div>
+          <div class="chip-row">
+            <button
+              v-for="t in filterCustomTags" :key="t.id"
+              type="button"
+              class="filter-chip"
+              :class="{ active: filters.customTagIds.includes(t.id) }"
+              @click="filters.customTagIds.includes(t.id) ? filters.customTagIds.splice(filters.customTagIds.indexOf(t.id),1) : filters.customTagIds.push(t.id)"
+            >{{ t.name }}</button>
+            <span v-if="!filters.setupId" class="empty-hint">Select a setup first</span>
+            <span v-else-if="!filterCustomTags.length" class="empty-hint">No tags</span>
+          </div>
         </div>
         <div class="filter-group sm">
           <div class="filter-label">Date From</div>
@@ -2152,6 +2203,45 @@ function openInBrowser(url) {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+}
+.filter-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--bg-input);
+  color: var(--text-2);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.filter-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.filter-chip:hover:not(.active) {
+  border-color: var(--border);
+  color: var(--text-1);
+}
+.filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 .sym-input-row {
   display: flex;
