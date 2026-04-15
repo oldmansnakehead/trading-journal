@@ -11,7 +11,7 @@ import LogTradeForm from '../components/LogTradeForm.vue'
 
 <style scoped>
 .view-container {
-  max-width: 900px;
+  max-width: 70vw;
   margin: 0 auto;
   padding: 24px;
 }

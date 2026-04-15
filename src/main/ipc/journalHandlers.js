@@ -162,6 +162,8 @@ export function registerJournalHandlers() {
       rrTypes = [],
       rrTypeIds = [],
       symbols = [],
+      setupSlots = [],   // [{ setupId, strategyIds, customTagIds }]
+      // legacy single-setup fields (kept for backwards compat)
       setupId,
       strategyId,
       strategyIds = [],
@@ -194,61 +196,98 @@ export function registerJournalHandlers() {
       conditions.push(`j.symbol IN (${symbols.map(() => '?').join(',')})`)
       params.push(...symbols)
     }
-    if (setupId) {
-      conditions.push('j.setupId = ?')
-      params.push(setupId)
+
+    // ── Setup slots — each slot is a full independent filter set joined with OR ─
+    if (setupSlots.length > 0) {
+      const slotClauses = []
+      for (const slot of setupSlots) {
+        const parts = []
+
+        if (slot.setupId) {
+          parts.push('j.setupId = ?')
+          params.push(slot.setupId)
+        }
+        const slotSessions = slot.sessions || []
+        if (slotSessions.length > 0) {
+          parts.push(`j.session IN (${slotSessions.map(() => '?').join(',')})`)
+          params.push(...slotSessions)
+        }
+        const slotRRTypeIds = slot.rrTypeIds || []
+        if (slotRRTypeIds.length > 0) {
+          parts.push(`j.rrTypeId IN (${slotRRTypeIds.map(() => '?').join(',')})`)
+          params.push(...slotRRTypeIds)
+        }
+        const slotSymbols = slot.symbols || []
+        if (slotSymbols.length > 0) {
+          parts.push(`j.symbol IN (${slotSymbols.map(() => '?').join(',')})`)
+          params.push(...slotSymbols)
+        }
+        const slotStrategyIds = slot.strategyIds || []
+        if (slotStrategyIds.length > 0) {
+          parts.push(`j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId IN (${slotStrategyIds.map(() => '?').join(',')}))`)
+          params.push(...slotStrategyIds)
+        }
+        const slotCustomTagIds = slot.customTagIds || []
+        if (slotCustomTagIds.length > 0) {
+          parts.push(`j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId IN (${slotCustomTagIds.map(() => '?').join(',')}))`)
+          params.push(...slotCustomTagIds)
+        }
+        if (slot.hasNews !== null && slot.hasNews !== undefined) {
+          parts.push('j.hasNews = ?')
+          params.push(Number(slot.hasNews))
+        }
+        if (slot.isTest !== null && slot.isTest !== undefined) {
+          parts.push('COALESCE(j.isTest, 0) = ?')
+          params.push(slot.isTest ? 1 : 0)
+        }
+        if (slot.isExcluded !== null && slot.isExcluded !== undefined) {
+          parts.push('COALESCE(j.isExcluded, 0) = ?')
+          params.push(slot.isExcluded ? 1 : 0)
+        }
+        const slotColorRatings = slot.colorRatings || []
+        if (slotColorRatings.length > 0) {
+          parts.push(`j.colorRating IN (${slotColorRatings.map(() => '?').join(',')})`)
+          params.push(...slotColorRatings)
+        }
+
+        // A slot with no filters = match everything (no condition needed → skip clause)
+        if (parts.length > 0) slotClauses.push(`(${parts.join(' AND ')})`)
+      }
+      if (slotClauses.length > 0) conditions.push(`(${slotClauses.join(' OR ')})`)
+    } else {
+      // Legacy single-filter fallback
+      if (setupId) { conditions.push('j.setupId = ?'); params.push(setupId) }
+      if (strategyIds.length > 0) {
+        conditions.push(`j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId IN (${strategyIds.map(() => '?').join(',')}))`)
+        params.push(...strategyIds)
+      } else if (strategyId) {
+        conditions.push('j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId = ?)')
+        params.push(strategyId)
+      }
+      if (customTagIds.length > 0) {
+        conditions.push(`j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId IN (${customTagIds.map(() => '?').join(',')}))`)
+        params.push(...customTagIds)
+      } else if (customTagId) {
+        conditions.push('j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId = ?)')
+        params.push(customTagId)
+      }
+      if (hasNews !== null && hasNews !== undefined) { conditions.push('j.hasNews = ?'); params.push(Number(hasNews)) }
+      if (isTest !== null && isTest !== undefined) { conditions.push('COALESCE(j.isTest, 0) = ?'); params.push(isTest ? 1 : 0) }
+      if (isExcluded !== null && isExcluded !== undefined) { conditions.push('COALESCE(j.isExcluded, 0) = ?'); params.push(isExcluded ? 1 : 0) }
+      if (colorRatings.length > 0) { conditions.push(`j.colorRating IN (${colorRatings.map(() => '?').join(',')})`); params.push(...colorRatings) }
     }
-    if (strategyIds.length > 0) {
-      conditions.push(`j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId IN (${strategyIds.map(() => '?').join(',')}))`)
-      params.push(...strategyIds)
-    } else if (strategyId) {
-      conditions.push('j.id IN (SELECT journalId FROM Journal_Strategies WHERE strategyId = ?)')
-      params.push(strategyId)
-    }
-    if (customTagIds.length > 0) {
-      conditions.push(`j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId IN (${customTagIds.map(() => '?').join(',')}))`)
-      params.push(...customTagIds)
-    } else if (customTagId) {
-      conditions.push('j.id IN (SELECT journalId FROM Journal_CustomTags WHERE customTagId = ?)')
-      params.push(customTagId)
-    }
-    if (hasNews !== null && hasNews !== undefined) {
-      conditions.push('j.hasNews = ?')
-      params.push(Number(hasNews))
-    }
-    if (isTest !== null && isTest !== undefined) {
-      conditions.push('COALESCE(j.isTest, 0) = ?')
-      params.push(isTest ? 1 : 0)
-    }
-    if (isExcluded !== null && isExcluded !== undefined) {
-      conditions.push('COALESCE(j.isExcluded, 0) = ?')
-      params.push(isExcluded ? 1 : 0)
-    }
-    if (colorRatings.length > 0) {
-      conditions.push(`j.colorRating IN (${colorRatings.map(() => '?').join(',')})`)
-      params.push(...colorRatings)
-    }
-    if (dateFrom) {
-      conditions.push('j.entryDateTime >= ?')
-      params.push(dateFrom)
-    }
-    if (dateTo) {
-      conditions.push('j.entryDateTime <= ?')
-      params.push(dateTo)
-    }
+
+    if (dateFrom) { conditions.push('j.entryDateTime >= ?'); params.push(dateFrom) }
+    if (dateTo)   { conditions.push('j.entryDateTime <= ?'); params.push(dateTo) }
     return { conditions, params }
   }
 
   handle('journals:query', (_event, filters = {}) => {
     const { conditions, params } = buildFilterConditions(filters)
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    console.log('[query] filters received:', JSON.stringify(filters))
-    console.log('[query] WHERE:', where)
-    console.log('[query] params:', params)
     const rows = db
       .prepare(`${JOURNAL_SELECT} ${where} GROUP BY j.id ORDER BY j.entryDateTime ASC`)
       .all(...params)
-    console.log('[query] result count:', rows.length)
     return withImageUrls(rows)
   })
 

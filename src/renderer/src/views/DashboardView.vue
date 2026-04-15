@@ -8,6 +8,8 @@ import {
   PointElement,
   BarController,
   BarElement,
+  DoughnutController,
+  ArcElement,
   LinearScale,
   CategoryScale,
   Filler,
@@ -21,6 +23,8 @@ Chart.register(
   PointElement,
   BarController,
   BarElement,
+  DoughnutController,
+  ArcElement,
   LinearScale,
   CategoryScale,
   Filler,
@@ -44,27 +48,34 @@ function onTradeSubmitted() {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const setups = ref([])
-const strategies = ref([])
 const symbolOptions = ref([])
-const sessionOptions = ref([])
+
+// All filter fields per slot — only dateFrom/dateTo are shared
+function makeSlot() {
+  return {
+    setupId: '',
+    sessions: [],
+    rrTypeIds: [],
+    symbols: [],
+    strategyIds: [],
+    customTagIds: [],
+    hasNews: null,
+    isTest: null,
+    isExcluded: null,
+    colorRatings: [],
+    // loaded dynamically when setupId chosen
+    strategies: [],
+    customTags: [],
+    // UI state: open dropdown panel
+    openDropdown: null  // 'session'|'rrType'|'symbol'|null
+  }
+}
 
 const filters = ref({
-  sessions: [],
-  rrTypes: [],
-  rrTypeIds: [],
-  symbols: [],
-  setupId: '',
-  strategyIds: [],
-  customTagIds: [],
-  hasNews: null,    // null = all, 1 = yes, 0 = no
-  isTest: null,     // null = all, true = test only, false = real only
-  isExcluded: null, // null = all, true = excluded only, false = non-excluded only
-  colorRatings: [],
+  setupSlots: [makeSlot()],
   dateFrom: '',
   dateTo: ''
 })
-
-const symbolInput = ref('')
 const results = ref([])
 const summary = ref(null)
 const isLoading = ref(false)
@@ -72,7 +83,6 @@ const loadError = ref('')
 const nativeDateFromRef = ref(null)
 const nativeDateToRef = ref(null)
 
-const filterCustomTags = ref([])
 const COLOR_OPTIONS = ['red', 'orange', 'yellow', 'green']
 
 // ── Edit Modal ────────────────────────────────────────────────────────────────
@@ -129,15 +139,24 @@ const pnlGroupBy = ref('day') // day, symbol, session, rrType, rating, news
 const equityChartCanvas = ref(null)
 const drawdownChartCanvas = ref(null)
 const pnlChartCanvas = ref(null)
+const winrateChartCanvas = ref(null)
 let equityChart = null
 let drawdownChart = null
 let pnlChart = null
+let winrateChart = null
 
 onUnmounted(() => {
   if (equityChart) equityChart.destroy()
   if (drawdownChart) drawdownChart.destroy()
   if (pnlChart) pnlChart.destroy()
+  if (winrateChart) winrateChart.destroy()
+  document.removeEventListener('click', closeAllSlotDropdowns)
 })
+
+function closeAllSlotDropdowns() {
+  filters.value.setupSlots.forEach((sl) => { sl.openDropdown = null })
+}
+
 
 async function loadSettings() {
   try {
@@ -391,8 +410,19 @@ const enhancedSummary = computed(() => {
   const finalBalance = rows.length ? rows[rows.length - 1].balance : initialBalance.value
   const minDrawdown = rows.length ? Math.min(...rows.map((r) => r.drawdown)) : 0
 
+  const winCount = wins.length
+  const lossCount = losses.length
+  const total = rows.length
+  const winRate = (winCount + lossCount) > 0
+    ? +((winCount / (winCount + lossCount)) * 100).toFixed(2)
+    : null
+
   return {
     ...summary.value,
+    total,
+    wins: winCount,
+    losses: lossCount,
+    winRate,
     totalDollarPnl,
     grossProfit,
     grossLoss,
@@ -408,65 +438,45 @@ const enhancedSummary = computed(() => {
 })
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
-const allStrategies = ref([])
-
-onMounted(async () => {
-  await loadSettings()
-  const [s, sym, rrTypesList, allStrat] = await Promise.all([
-    window.api.getAllSetups(),
-    window.api.getDistinctSymbols(),
-    window.api.getAllRRTypes(),
-    window.api.getAllStrategies()
-  ])
-  setups.value = s
-  symbolOptions.value = sym
-  rrTypeOptions.value = rrTypesList.map((r) => r.name)
-  sessionOptions.value = ALL_SESSIONS
-  allStrategies.value = allStrat
-  strategies.value = allStrat
-})
 onActivated(runQuery)
 
-// ── Strategy & Tag dropdown filtered by setup ────────────────────────────────
-async function onSetupChange() {
-  filters.value.strategyIds = []
-  filters.value.customTagIds = []
-  filterCustomTags.value = []
-  if (filters.value.setupId) {
+// ── Per-slot helpers ──────────────────────────────────────────────────────────
+async function onSlotSetupChange(slot) {
+  slot.strategyIds = []
+  slot.customTagIds = []
+  slot.strategies = []
+  slot.customTags = []
+  if (slot.setupId) {
     const [strats, tags] = await Promise.all([
-      window.api.getStrategiesForSetup(Number(filters.value.setupId)),
-      window.api.getCustomTagsForSetup(Number(filters.value.setupId))
+      window.api.getStrategiesForSetup(Number(slot.setupId)),
+      window.api.getCustomTagsForSetup(Number(slot.setupId))
     ])
-    strategies.value = strats
-    filterCustomTags.value = tags.slice().sort((a, b) => {
+    slot.strategies = strats
+    slot.customTags = tags.slice().sort((a, b) => {
       const na = parseFloat(a.name), nb = parseFloat(b.name)
       if (!isNaN(na) && !isNaN(nb)) return na - nb
       return a.name.localeCompare(b.name)
     })
-  } else {
-    strategies.value = allStrategies.value
   }
 }
 
-// ── Symbol chips ──────────────────────────────────────────────────────────────
-function addSymbol() {
-  const s = symbolInput.value.trim().toUpperCase()
-  if (s && !filters.value.symbols.includes(s)) filters.value.symbols.push(s)
-  symbolInput.value = ''
-}
-function removeSymbol(s) {
-  filters.value.symbols = filters.value.symbols.filter((x) => x !== s)
-}
-function toggleSymbolOption(sym) {
-  const idx = filters.value.symbols.indexOf(sym)
-  if (idx === -1) filters.value.symbols.push(sym)
-  else filters.value.symbols.splice(idx, 1)
+function addSetupSlot() {
+  filters.value.setupSlots.push(makeSlot())
 }
 
-function toggleColorFilter(c) {
-  const idx = filters.value.colorRatings.indexOf(c)
-  if (idx === -1) filters.value.colorRatings.push(c)
-  else filters.value.colorRatings.splice(idx, 1)
+function removeSetupSlot(idx) {
+  filters.value.setupSlots.splice(idx, 1)
+  if (filters.value.setupSlots.length === 0) filters.value.setupSlots.push(makeSlot())
+}
+
+function toggleSlotMulti(arr, val) {
+  const idx = arr.indexOf(val)
+  if (idx === -1) arr.push(val)
+  else arr.splice(idx, 1)
+}
+
+function toggleSlotColor(slot, c) {
+  toggleSlotMulti(slot.colorRatings, c)
 }
 
 function normalizeThaiDateInput(raw) {
@@ -539,33 +549,29 @@ async function runQuery() {
       throw new Error('Date To ต้องเป็นรูปแบบ dd/mm/yyyy (ค.ศ.)')
     }
 
+    const normBool = (v) => v === null ? null : v === true || v === 'true'
     const f = {
-      sessions: [...filters.value.sessions],
-      rrTypes: [...filters.value.rrTypes],
-      rrTypeIds: [...filters.value.rrTypeIds],
-      symbols: [...filters.value.symbols],
-      setupId: filters.value.setupId ? Number(filters.value.setupId) : null,
-      strategyIds: filters.value.strategyIds.map(Number),
-      customTagIds: filters.value.customTagIds.map(Number),
-      hasNews: filters.value.hasNews,
-      isTest: filters.value.isTest === null ? null : filters.value.isTest === true || filters.value.isTest === 'true',
-      isExcluded: filters.value.isExcluded === null ? null : filters.value.isExcluded === true || filters.value.isExcluded === 'true',
-      colorRatings: [...filters.value.colorRatings],
+      setupSlots: filters.value.setupSlots.map((sl) => ({
+        setupId: sl.setupId ? Number(sl.setupId) : null,
+        sessions: [...sl.sessions],
+        rrTypeIds: sl.rrTypeIds.map(Number),
+        symbols: [...sl.symbols],
+        strategyIds: sl.strategyIds.map(Number),
+        customTagIds: sl.customTagIds.map(Number),
+        hasNews: sl.hasNews,
+        isTest: normBool(sl.isTest),
+        isExcluded: normBool(sl.isExcluded),
+        colorRatings: [...sl.colorRatings]
+      })),
       dateFrom: isoFrom ? `${isoFrom}T00:00` : null,
       dateTo: isoTo ? `${isoTo}T23:59` : null
     }
-    console.log('[filter] sending:', JSON.stringify(f))
-    const [rows, stat, allRRTypes] = await Promise.all([
+    const [rows, stat] = await Promise.all([
       window.api.queryJournals(f),
-      window.api.getJournalSummary(f),
-      window.api.getAllRRTypes()
+      window.api.getJournalSummary(f)
     ])
-    console.log('[filter] got rows:', rows.length, rows[0])
     results.value = rows
     summary.value = stat
-    
-    // Use allRRTypes directly for ID binding
-    rrTypeOptions.value = allRRTypes
 
   } catch (e) {
     loadError.value = e.message ?? 'โหลดข้อมูลไม่สำเร็จ'
@@ -804,34 +810,71 @@ function updatePnlChart(rows) {
 }
 
 function clearFilters() {
-  filters.value = {
-    sessions: [],
-    rrTypes: [],
-    rrTypeIds: [],
-    symbols: [],
-    setupId: '',
-    strategyIds: [],
-    customTagIds: [],
-    hasNews: null,
-    isTest: null,
-    isExcluded: null,
-    colorRatings: [],
-    dateFrom: '',
-    dateTo: ''
-  }
-  strategies.value = allStrategies.value
-  symbolInput.value = ''
+  filters.value = { setupSlots: [makeSlot()], dateFrom: '', dateTo: '' }
   runQuery()
 }
 
 onMounted(async () => {
+  document.addEventListener('click', closeAllSlotDropdowns)
   await loadSettings()
+  const [s, sym, rrList] = await Promise.all([
+    window.api.getAllSetups(),
+    window.api.getDistinctSymbols(),
+    window.api.getAllRRTypes()
+  ])
+  setups.value = s
+  symbolOptions.value = sym
+  rrTypeOptions.value = rrList
   await runQuery()
 })
 
-onActivated(async () => {
-  await runQuery()
-})
+function updateWinrateChart() {
+  if (!winrateChartCanvas.value || !enhancedSummary.value) return
+  const s = enhancedSummary.value
+  const wins = s.wins ?? 0
+  const losses = s.losses ?? 0
+  const breakeven = (s.total ?? 0) - wins - losses
+  const isLight = document.documentElement.dataset.theme === 'light'
+  const bg = isLight
+    ? ['#bbf7d0', '#fecaca', '#fef3c7']
+    : ['#166534', '#7f1d1d', '#713f12']
+  const border = isLight
+    ? ['#16a34a', '#dc2626', '#ca8a04']
+    : ['#4ade80', '#f87171', '#fbbf24']
+  if (winrateChart) winrateChart.destroy()
+  winrateChart = new Chart(winrateChartCanvas.value, {
+    type: 'doughnut',
+    data: {
+      labels: ['Win', 'Loss', 'Breakeven'],
+      datasets: [{
+        data: [wins, losses, breakeven],
+        backgroundColor: bg,
+        borderColor: border,
+        borderWidth: 2,
+        hoverOffset: 6
+      }]
+    },
+    options: {
+      cutout: '65%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0)
+              const pct = total ? ((ctx.raw / total) * 100).toFixed(1) : 0
+              return ` ${ctx.label}: ${ctx.raw} (${pct}%)`
+            }
+          }
+        }
+      }
+    }
+  })
+}
+
+watch(enhancedSummary, () => {
+  nextTick(() => updateWinrateChart())
+}, { immediate: false })
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(dt) {
@@ -858,6 +901,33 @@ async function deleteRow(id) {
 const winRateDisplay = computed(() =>
   enhancedSummary.value?.winRate != null ? `${enhancedSummary.value.winRate}%` : '—'
 )
+
+// ── Win Rate pie drag ─────────────────────────────────────────────────────────
+const piePos = ref({ top: 24, right: 24, left: null })
+let _drag = null
+
+function onPieMousedown(e) {
+  if (e.button !== 0) return
+  const el = e.currentTarget
+  const rect = el.getBoundingClientRect()
+  _drag = { startX: e.clientX, startY: e.clientY, origTop: rect.top, origLeft: rect.left }
+  e.preventDefault()
+  window.addEventListener('mousemove', onPieMousemove)
+  window.addEventListener('mouseup', onPieMouseup)
+}
+
+function onPieMousemove(e) {
+  if (!_drag) return
+  const dx = e.clientX - _drag.startX
+  const dy = e.clientY - _drag.startY
+  piePos.value = { top: _drag.origTop + dy, left: _drag.origLeft + dx, right: null }
+}
+
+function onPieMouseup() {
+  _drag = null
+  window.removeEventListener('mousemove', onPieMousemove)
+  window.removeEventListener('mouseup', onPieMouseup)
+}
 
 // ── Sorted edit lists ─────────────────────────────────────────────────────────
 const sortedEditStrategies = computed(() =>
@@ -1179,179 +1249,165 @@ function openInBrowser(url) {
 
     <!-- ── Filter Panel ──────────────────────────────────────────────────── -->
     <div class="filter-panel">
-      <div class="filter-group">
-        <div class="filter-label">Session</div>
-        <div class="checkbox-row">
-          <label v-for="s in ALL_SESSIONS" :key="s" class="check-label">
-            <input v-model="filters.sessions" type="checkbox" :value="s" />{{ s }}
-          </label>
-        </div>
-      </div>
 
-      <div class="filter-group">
-        <div class="filter-label">RR Type</div>
-        <div class="checkbox-row">
-          <label v-for="r in rrTypeOptions" :key="r.id" class="check-label">
-            <input v-model="filters.rrTypeIds" type="checkbox" :value="r.id" />{{ r.name }}
-          </label>
-          <span v-if="!rrTypeOptions.length" class="empty-hint">No RR Types defined</span>
-        </div>
-      </div>
+      <!-- ── Setup Slots ──────────────────────────────────────────────────── -->
+      <div class="setup-slots">
+        <div v-for="(slot, idx) in filters.setupSlots" :key="idx" class="setup-slot">
+          <!-- slot header -->
+          <div class="setup-slot-header">
+            <span class="slot-title">Setup {{ filters.setupSlots.length > 1 ? idx + 1 : '' }}</span>
+            <button v-if="filters.setupSlots.length > 1" type="button" class="slot-remove-btn" @click="removeSetupSlot(idx)">✕</button>
+          </div>
 
-      <div class="filter-row-top">
-        <div class="filter-group">
-          <div class="filter-label">News</div>
-          <select v-model="filters.hasNews" class="sm-select">
-            <option :value="null">All</option>
-            <option :value="1">With News (✓)</option>
-            <option :value="0">No News (—)</option>
-          </select>
-        </div>
+          <!-- row 1: Setup + Session + RR Type + Symbol -->
+          <div class="slot-row">
+            <div class="slot-field">
+              <div class="slot-field-label">Trade Setup</div>
+              <select v-model="slot.setupId" @change="onSlotSetupChange(slot)">
+                <option value="">All</option>
+                <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </div>
 
-        <div class="filter-group">
-          <div class="filter-label">Test Item</div>
-          <select v-model="filters.isTest" class="sm-select">
-            <option :value="null">All</option>
-            <option :value="true">Test Only (🧪)</option>
-            <option :value="false">Real Only</option>
-          </select>
-        </div>
+            <div class="slot-field">
+              <div class="slot-field-label">Session <span v-if="slot.sessions.length" class="filter-count">{{ slot.sessions.length }}</span></div>
+              <div class="slot-dropdown-wrap" @click.stop>
+                <button type="button" class="slot-dropdown-btn" @click="slot.openDropdown = slot.openDropdown === 'session' ? null : 'session'">
+                  {{ slot.sessions.length ? slot.sessions.join(', ') : 'All' }} ▾
+                </button>
+                <div v-if="slot.openDropdown === 'session'" class="slot-dropdown-panel">
+                  <label v-for="s in ALL_SESSIONS" :key="s" class="slot-dd-item">
+                    <input type="checkbox" :checked="slot.sessions.includes(s)" @change="toggleSlotMulti(slot.sessions, s)" />{{ s }}
+                  </label>
+                </div>
+              </div>
+            </div>
 
-        <div class="filter-group">
-          <div class="filter-label">Excluded</div>
-          <select v-model="filters.isExcluded" class="sm-select">
-            <option :value="null">All</option>
-            <option :value="true">Excluded Only (✖)</option>
-            <option :value="false">Non-Excluded</option>
-          </select>
-        </div>
+            <div class="slot-field">
+              <div class="slot-field-label">RR Type <span v-if="slot.rrTypeIds.length" class="filter-count">{{ slot.rrTypeIds.length }}</span></div>
+              <div class="slot-dropdown-wrap" @click.stop>
+                <button type="button" class="slot-dropdown-btn" @click="slot.openDropdown = slot.openDropdown === 'rrType' ? null : 'rrType'">
+                  {{ slot.rrTypeIds.length ? slot.rrTypeIds.length + ' selected' : 'All' }} ▾
+                </button>
+                <div v-if="slot.openDropdown === 'rrType'" class="slot-dropdown-panel">
+                  <label v-for="r in rrTypeOptions" :key="r.id" class="slot-dd-item">
+                    <input type="checkbox" :checked="slot.rrTypeIds.includes(r.id)" @change="toggleSlotMulti(slot.rrTypeIds, r.id)" />{{ r.name }}
+                  </label>
+                  <span v-if="!rrTypeOptions.length" class="empty-hint">No RR Types</span>
+                </div>
+              </div>
+            </div>
 
-        <div class="filter-group">
-          <div class="filter-label">Rating</div>
-          <div class="color-filter-row">
-            <button
-              v-for="c in COLOR_OPTIONS"
-              :key="c"
-              class="color-filter-chip"
-              :class="[`color-filter-chip--${c}`, { active: filters.colorRatings.includes(c) }]"
-              @click="toggleColorFilter(c)"
-            ></button>
+            <div class="slot-field">
+              <div class="slot-field-label">Symbol <span v-if="slot.symbols.length" class="filter-count">{{ slot.symbols.length }}</span></div>
+              <div class="slot-dropdown-wrap" @click.stop>
+                <button type="button" class="slot-dropdown-btn" @click="slot.openDropdown = slot.openDropdown === 'symbol' ? null : 'symbol'">
+                  {{ slot.symbols.length ? slot.symbols.join(', ') : 'All' }} ▾
+                </button>
+                <div v-if="slot.openDropdown === 'symbol'" class="slot-dropdown-panel">
+                  <label v-for="sym in symbolOptions" :key="sym" class="slot-dd-item">
+                    <input type="checkbox" :checked="slot.symbols.includes(sym)" @change="toggleSlotMulti(slot.symbols, sym)" />{{ sym }}
+                  </label>
+                  <span v-if="!symbolOptions.length" class="empty-hint">No symbols</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- row 2: News + Test + Excluded + Rating -->
+          <div class="slot-row">
+            <div class="slot-field sm">
+              <div class="slot-field-label">News</div>
+              <select v-model="slot.hasNews" class="sm-select">
+                <option :value="null">All</option>
+                <option :value="1">With News</option>
+                <option :value="0">No News</option>
+              </select>
+            </div>
+            <div class="slot-field sm">
+              <div class="slot-field-label">Test</div>
+              <select v-model="slot.isTest" class="sm-select">
+                <option :value="null">All</option>
+                <option :value="true">Test Only</option>
+                <option :value="false">Real Only</option>
+              </select>
+            </div>
+            <div class="slot-field sm">
+              <div class="slot-field-label">Excluded</div>
+              <select v-model="slot.isExcluded" class="sm-select">
+                <option :value="null">All</option>
+                <option :value="true">Excluded</option>
+                <option :value="false">Non-Excluded</option>
+              </select>
+            </div>
+            <div class="slot-field sm">
+              <div class="slot-field-label">Rating</div>
+              <div class="color-filter-row">
+                <button
+                  v-for="c in COLOR_OPTIONS" :key="c"
+                  type="button"
+                  class="color-filter-chip"
+                  :class="[`color-filter-chip--${c}`, { active: slot.colorRatings.includes(c) }]"
+                  @click="toggleSlotColor(slot, c)"
+                ></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- row 3: Strategy chips + TimeBOS chips -->
+          <div class="slot-row wrap-row">
+            <div class="slot-field grow">
+              <div class="slot-field-label">Strategy <span v-if="slot.strategyIds.length" class="filter-count">{{ slot.strategyIds.length }}</span></div>
+              <div class="chip-row">
+                <template v-if="slot.setupId">
+                  <button
+                    v-for="s in slot.strategies" :key="s.id"
+                    type="button" class="filter-chip"
+                    :class="{ active: slot.strategyIds.includes(s.id) }"
+                    @click="toggleSlotMulti(slot.strategyIds, s.id)"
+                  >{{ s.name }}</button>
+                  <span v-if="!slot.strategies.length" class="empty-hint">No strategies</span>
+                </template>
+                <span v-else class="empty-hint">Select a setup first</span>
+              </div>
+            </div>
+            <div class="slot-field grow">
+              <div class="slot-field-label">{{ customColumnName }} <span v-if="slot.customTagIds.length" class="filter-count">{{ slot.customTagIds.length }}</span></div>
+              <div class="chip-row">
+                <template v-if="slot.setupId">
+                  <button
+                    v-for="t in slot.customTags" :key="t.id"
+                    type="button" class="filter-chip"
+                    :class="{ active: slot.customTagIds.includes(t.id) }"
+                    @click="toggleSlotMulti(slot.customTagIds, t.id)"
+                  >{{ t.name }}</button>
+                  <span v-if="!slot.customTags.length" class="empty-hint">No tags</span>
+                </template>
+                <span v-else class="empty-hint">Select a setup first</span>
+              </div>
+            </div>
           </div>
         </div>
+
+        <button type="button" class="slot-add-btn" @click="addSetupSlot">+ Add Setup</button>
       </div>
 
-      <div class="filter-group">
-        <div class="filter-label">Symbol</div>
-        <div class="symbol-row">
-          <button
-            v-for="sym in symbolOptions"
-            :key="sym"
-            class="sym-chip"
-            :class="{ active: filters.symbols.includes(sym) }"
-            type="button"
-            @click="toggleSymbolOption(sym)"
-          >
-            {{ sym }}
-          </button>
-          <form class="sym-input-row" @submit.prevent="addSymbol">
-            <input v-model="symbolInput" placeholder="Type symbol…" />
-            <button type="submit">+</button>
-          </form>
-        </div>
-        <div v-if="filters.symbols.length" class="active-chips">
-          <span v-for="s in filters.symbols" :key="s" class="active-chip">
-            {{ s }} <button @click="removeSymbol(s)">×</button>
-          </span>
-        </div>
-      </div>
-
+      <!-- ── Date range (shared) ──────────────────────────────────────────── -->
       <div class="filter-row">
-        <div class="filter-group sm">
-          <div class="filter-label">Trade Setup</div>
-          <select v-model="filters.setupId" @change="onSetupChange">
-            <option value="">All Setups</option>
-            <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <div class="filter-label">Strategy <span v-if="filters.strategyIds.length" class="filter-count">{{ filters.strategyIds.length }}</span></div>
-          <div class="chip-row">
-            <button
-              v-for="s in strategies" :key="s.id"
-              type="button"
-              class="filter-chip"
-              :class="{ active: filters.strategyIds.includes(s.id) }"
-              @click="filters.strategyIds.includes(s.id) ? filters.strategyIds.splice(filters.strategyIds.indexOf(s.id),1) : filters.strategyIds.push(s.id)"
-            >{{ s.name }}</button>
-            <span v-if="!strategies.length" class="empty-hint">No strategies</span>
-          </div>
-        </div>
-        <div class="filter-group">
-          <div class="filter-label">{{ customColumnName }} <span v-if="filters.customTagIds.length" class="filter-count">{{ filters.customTagIds.length }}</span></div>
-          <div class="chip-row">
-            <button
-              v-for="t in filterCustomTags" :key="t.id"
-              type="button"
-              class="filter-chip"
-              :class="{ active: filters.customTagIds.includes(t.id) }"
-              @click="filters.customTagIds.includes(t.id) ? filters.customTagIds.splice(filters.customTagIds.indexOf(t.id),1) : filters.customTagIds.push(t.id)"
-            >{{ t.name }}</button>
-            <span v-if="!filters.setupId" class="empty-hint">Select a setup first</span>
-            <span v-else-if="!filterCustomTags.length" class="empty-hint">No tags</span>
-          </div>
-        </div>
         <div class="filter-group sm">
           <div class="filter-label">Date From</div>
           <div class="date-input-wrap">
-            <input
-              :value="filters.dateFrom"
-              type="text"
-              placeholder="dd/mm/yyyy"
-              maxlength="10"
-              @input="onFilterDateInput('dateFrom', $event)"
-            />
-            <button
-              type="button"
-              class="date-picker-btn"
-              @click="pickFilterDate('dateFrom', nativeDateFromRef)"
-            >
-              📅
-            </button>
-            <input
-              ref="nativeDateFromRef"
-              class="native-date-picker"
-              type="date"
-              tabindex="-1"
-              aria-hidden="true"
-              @change="onNativeFilterDateChange('dateFrom', $event.target.value)"
-            />
+            <input :value="filters.dateFrom" type="text" placeholder="dd/mm/yyyy" maxlength="10" @input="onFilterDateInput('dateFrom', $event)" />
+            <button type="button" class="date-picker-btn" @click="pickFilterDate('dateFrom', nativeDateFromRef)">📅</button>
+            <input ref="nativeDateFromRef" class="native-date-picker" type="date" tabindex="-1" aria-hidden="true" @change="onNativeFilterDateChange('dateFrom', $event.target.value)" />
           </div>
         </div>
         <div class="filter-group sm">
           <div class="filter-label">Date To</div>
           <div class="date-input-wrap">
-            <input
-              :value="filters.dateTo"
-              type="text"
-              placeholder="dd/mm/yyyy"
-              maxlength="10"
-              @input="onFilterDateInput('dateTo', $event)"
-            />
-            <button
-              type="button"
-              class="date-picker-btn"
-              @click="pickFilterDate('dateTo', nativeDateToRef)"
-            >
-              📅
-            </button>
-            <input
-              ref="nativeDateToRef"
-              class="native-date-picker"
-              type="date"
-              tabindex="-1"
-              aria-hidden="true"
-              @change="onNativeFilterDateChange('dateTo', $event.target.value)"
-            />
+            <input :value="filters.dateTo" type="text" placeholder="dd/mm/yyyy" maxlength="10" @input="onFilterDateInput('dateTo', $event)" />
+            <button type="button" class="date-picker-btn" @click="pickFilterDate('dateTo', nativeDateToRef)">📅</button>
+            <input ref="nativeDateToRef" class="native-date-picker" type="date" tabindex="-1" aria-hidden="true" @change="onNativeFilterDateChange('dateTo', $event.target.value)" />
           </div>
         </div>
       </div>
@@ -1370,6 +1426,29 @@ function openInBrowser(url) {
       </div>
     </div>
 
+    <!-- ── Win Rate Pie (floating top-right, draggable) ─────────────────── -->
+    <div
+      v-if="enhancedSummary"
+      class="winrate-float"
+      :style="{
+        top: piePos.top + 'px',
+        left: piePos.left != null ? piePos.left + 'px' : 'auto',
+        right: piePos.right != null ? piePos.right + 'px' : 'auto',
+      }"
+      @mousedown="onPieMousedown"
+    >
+      <div class="stat-label">Win Rate</div>
+      <div class="winrate-pie-wrap">
+        <canvas ref="winrateChartCanvas" class="winrate-canvas"></canvas>
+        <div class="winrate-center">{{ winRateDisplay }}</div>
+      </div>
+      <div class="winrate-legend">
+        <span class="wl-win">▮ W {{ enhancedSummary.wins }}</span>
+        <span class="wl-loss">▮ L {{ enhancedSummary.losses }}</span>
+        <span class="wl-be">▮ BE {{ enhancedSummary.total - enhancedSummary.wins - enhancedSummary.losses }}</span>
+      </div>
+    </div>
+
     <!-- ── Summary Stats ─────────────────────────────────────────────────── -->
     <div v-if="enhancedSummary" class="stats-grid">
       <div class="stat">
@@ -1383,10 +1462,6 @@ function openInBrowser(url) {
       <div class="stat loss">
         <div class="stat-label">Losses</div>
         <div class="stat-value">{{ enhancedSummary.losses }}</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">Win Rate</div>
-        <div class="stat-value">{{ winRateDisplay }}</div>
       </div>
       <div class="stat" :class="enhancedSummary.totalDollarPnl >= 0 ? 'win' : 'loss'">
         <div class="stat-label">Net PnL</div>
@@ -2036,6 +2111,7 @@ function openInBrowser(url) {
 <style scoped>
 .view-container {
   padding: 24px;
+  position: relative;
 }
 .view-title {
   font-size: 1.4rem;
@@ -2445,6 +2521,62 @@ select:disabled {
 .stat.loss .stat-value {
   color: var(--loss-text);
 }
+
+/* Win Rate Pie — floating card top-right */
+.winrate-float {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  text-align: center;
+  z-index: 100;
+  min-width: 150px;
+  cursor: grab;
+  user-select: none;
+}
+.winrate-float:active {
+  cursor: grabbing;
+}
+.winrate-pie-wrap {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  margin: 6px auto 4px;
+}
+.winrate-canvas {
+  width: 110px !important;
+  height: 110px !important;
+}
+.winrate-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-1);
+  pointer-events: none;
+}
+.winrate-legend {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-top: 4px;
+}
+/* dark mode */
+.wl-win  { color: #4ade80; }
+.wl-loss { color: #f87171; }
+.wl-be   { color: #fbbf24; }
+/* light mode — softer */
+[data-theme="light"] .wl-win  { color: #16a34a; }
+[data-theme="light"] .wl-loss { color: #dc2626; }
+[data-theme="light"] .wl-be   { color: #ca8a04; }
 
 /* Table */
 .table-wrapper {
@@ -3218,6 +3350,122 @@ tr.row-excluded {
   font-style: italic;
 }
 
+/* ── Setup Slots ── */
+.setup-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+.setup-slot {
+  background: var(--bg-mute);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-width: 300px;
+  flex: 1 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-slot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.slot-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.slot-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+.wrap-row { flex-wrap: wrap; }
+.slot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+}
+.slot-field.sm { min-width: 90px; max-width: 120px; }
+.slot-field.grow { flex: 1 1 180px; }
+.slot-field-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+/* dropdown multi-select */
+.slot-dropdown-wrap { position: relative; }
+.slot-dropdown-btn {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  color: var(--text-1);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slot-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  background: var(--bg-modal);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 6px 4px;
+  min-width: 160px;
+  max-height: 200px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.slot-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.slot-dd-item:hover { background: var(--bg-hover); }
+.slot-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.slot-remove-btn:hover { color: var(--loss-text); }
+.slot-add-btn {
+  align-self: flex-start;
+  padding: 8px 16px;
+  background: none;
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.slot-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+
 /* ── Dashboard New Filters ── */
 .filter-row-top {
   display: flex;
@@ -3463,7 +3711,7 @@ tr.row-excluded {
   background: var(--bg-modal);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
-  width: min(860px, 95vw);
+  width: 70vw;
   max-height: 90vh;
   display: flex;
   flex-direction: column;

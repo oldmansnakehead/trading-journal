@@ -4,9 +4,6 @@ import { ref, watch, computed, onMounted } from 'vue'
 const emit = defineEmits(['submitted'])
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const POSITIONS = ['Buy', 'Sell']
-const RESULTS = ['Win', 'Loss', 'Breakeven']
-const DIRECTION_BIAS = ['Bullish', 'Bearish']
 const TF_OPTIONS = ['M1', 'M3', 'M5', 'M15', 'M30', 'H1', 'H4']
 const ALL_SESSIONS = ['New York', 'London', 'London Close', 'Asia', 'Tokyo']
 
@@ -24,6 +21,7 @@ const hasNews = ref(false)
 const colorRating = ref('')
 const setupRRTypes = ref([]) // RR types linked to the selected setup
 
+const slHalf = ref(false)
 const isSubmitting = ref(false)
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -167,6 +165,13 @@ const sortedCustomTags = computed(() =>
   )
 )
 
+// ── SL ÷2 toggle ─────────────────────────────────────────────────────────
+watch(slHalf, (half) => {
+  const val = parseFloat(form.value.slPoint)
+  if (!val) return
+  form.value.slPoint = half ? String(+(val / 2).toFixed(2)) : String(+(val * 2).toFixed(2))
+})
+
 // ── TP Point auto-calc from SL + selected RR type ratio ───────────────────
 const selectedRRType = computed(
   () => setupRRTypes.value.find((r) => r.id === form.value.rrTypeId) ?? null
@@ -304,6 +309,10 @@ async function handleSubmit() {
     showToast('error', 'กรุณาเลือก Symbol')
     return
   }
+  if (!colorRating.value) {
+    showToast('error', 'กรุณาเลือกระดับสี (Quality)')
+    return
+  }
 
   isSubmitting.value = true
   try {
@@ -384,6 +393,7 @@ function resetForm() {
   imageUrlInputs.value = ['']
   hasNews.value = false
   colorRating.value = ''
+  slHalf.value = false
 }
 </script>
 
@@ -494,15 +504,37 @@ function resetForm() {
         </div>
         <div class="form-group">
           <label>Position *</label>
-          <select v-model="form.position" required>
-            <option v-for="p in POSITIONS" :key="p" :value="p">{{ p }}</option>
-          </select>
+          <div class="toggle-group">
+            <button
+              type="button"
+              class="toggle-btn toggle-btn--green"
+              :class="{ active: form.position === 'Buy' }"
+              @click="form.position = 'Buy'"
+            >Buy</button>
+            <button
+              type="button"
+              class="toggle-btn toggle-btn--red"
+              :class="{ active: form.position === 'Sell' }"
+              @click="form.position = 'Sell'"
+            >Sell</button>
+          </div>
         </div>
         <div class="form-group">
           <label>Direction Bias *</label>
-          <select v-model="form.directionBias" required>
-            <option v-for="d in DIRECTION_BIAS" :key="d" :value="d">{{ d }}</option>
-          </select>
+          <div class="toggle-group">
+            <button
+              type="button"
+              class="toggle-btn toggle-btn--green"
+              :class="{ active: form.directionBias === 'Bullish' }"
+              @click="form.directionBias = 'Bullish'"
+            >Bullish</button>
+            <button
+              type="button"
+              class="toggle-btn toggle-btn--red"
+              :class="{ active: form.directionBias === 'Bearish' }"
+              @click="form.directionBias = 'Bearish'"
+            >Bearish</button>
+          </div>
         </div>
       </div>
 
@@ -571,7 +603,13 @@ function resetForm() {
           </span>
         </div>
         <div class="form-group">
-          <label>SL Point</label>
+          <label>
+            SL Point
+            <label class="sl-half-toggle" @click.stop>
+              <input v-model="slHalf" type="checkbox" />
+              <span>÷2</span>
+            </label>
+          </label>
           <input v-model="form.slPoint" type="number" step="0.1" min="0" placeholder="e.g. 134" />
         </div>
         <div class="form-group">
@@ -591,9 +629,26 @@ function resetForm() {
       <div class="form-row">
         <div class="form-group">
           <label>Result *</label>
-          <select v-model="form.result" required>
-            <option v-for="r in RESULTS" :key="r" :value="r">{{ r }}</option>
-          </select>
+          <div class="toggle-group">
+            <button
+              type="button"
+              class="toggle-btn toggle-btn--green"
+              :class="{ active: form.result === 'Win' }"
+              @click="form.result = 'Win'"
+            >Win</button>
+            <button
+              type="button"
+              class="toggle-btn toggle-btn--red"
+              :class="{ active: form.result === 'Loss' }"
+              @click="form.result = 'Loss'"
+            >Loss</button>
+            <button
+              type="button"
+              class="toggle-btn toggle-btn--yellow"
+              :class="{ active: form.result === 'Breakeven' }"
+              @click="form.result = 'Breakeven'"
+            >Breakeven</button>
+          </div>
         </div>
         <div class="form-group">
           <label>News</label>
@@ -951,6 +1006,70 @@ button:disabled {
 .color-chip:hover:not(.active) {
   border-color: var(--border);
   color: var(--text-1);
+}
+
+/* ── Toggle button group (Position / Bias / Result) ── */
+.toggle-group {
+  display: flex;
+  gap: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+}
+.toggle-btn {
+  flex: 1;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 0;
+  background: var(--bg-mute);
+  color: var(--text-2);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.toggle-btn + .toggle-btn {
+  border-left: 1px solid var(--border-soft);
+}
+.toggle-btn--green.active {
+  background: #166534;
+  color: #bbf7d0;
+}
+.toggle-btn--red.active {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+.toggle-btn--yellow.active {
+  background: #713f12;
+  color: #fef08a;
+}
+.toggle-btn:hover:not(.active) {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+/* ── SL ÷2 inline toggle ── */
+.sl-half-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+.sl-half-toggle input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  padding: 0;
+  border: none;
+  background: none;
 }
 
 .image-url-list {
