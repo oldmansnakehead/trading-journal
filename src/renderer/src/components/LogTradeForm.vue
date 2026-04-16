@@ -285,8 +285,8 @@ function onTimeInput(field, e) {
 
 // ── Submit ────────────────────────────────────────────────────────────────────
 async function handleSubmit() {
-  if (!form.value.setupId || !selectedStrategyIds.value.length) {
-    showToast('error', 'กรุณาเลือก Setup และ Strategy')
+  if (!form.value.setupId) {
+    showToast('error', 'กรุณาเลือก Setup')
     return
   }
   if (!form.value.rrTypeId) {
@@ -351,6 +351,7 @@ async function handleSubmit() {
         .map((id) => customTags.value.find((t) => t.id === id)?.name)
         .filter(Boolean)
         .join(',') || null,
+      strategyIds: [...selectedStrategyIds.value],
       customTagIds: [...selectedCustomTagIds.value],
       isTest: form.value.isTest,
       isExcluded: form.value.isExcluded
@@ -394,6 +395,36 @@ function resetForm() {
   hasNews.value = false
   colorRating.value = ''
   slHalf.value = false
+}
+
+function clearOptionalFields() {
+  const keep = {
+    entryDate: form.value.entryDate,
+    entryTime: form.value.entryTime,
+    exitDate: form.value.exitDate,
+    exitTime: form.value.exitTime,
+    symbol: form.value.symbol,
+    session: form.value.session,
+  }
+
+  colorRating.value = ''
+  form.value.rrTypeId = ''
+  form.value.slPoint = ''
+  form.value.tpPoint = ''
+  form.value.isTest = false
+  form.value.isExcluded = false
+  selectedCustomTagIds.value = []
+  imageUrlInputs.value = ['']
+  form.value.notes = ''
+  selectedStrategyIds.value = []
+  form.value.setupId = ''
+  strategies.value = []
+  customTags.value = []
+  setupSessions.value = []
+  setupRRTypes.value = []
+  slHalf.value = false
+
+  Object.assign(form.value, keep)
 }
 </script>
 
@@ -746,6 +777,7 @@ function resetForm() {
           {{ isSubmitting ? 'Saving…' : 'Log Trade' }}
         </button>
         <button type="button" class="btn-secondary" @click="resetForm">Reset</button>
+        <button type="button" class="btn-clear-optional" @click="clearOptionalFields">Clear Fields</button>
       </div>
     </form>
 
@@ -905,6 +937,17 @@ button:disabled {
 .btn-secondary {
   background: var(--bg-hover);
   color: var(--text-1);
+}
+.btn-clear-optional {
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid var(--border-soft);
+  font-weight: 500;
+}
+.btn-clear-optional:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+  border-color: var(--border);
 }
 
 .tag-picker {
