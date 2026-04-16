@@ -82,6 +82,7 @@ watch(
     setupSessions.value = []
     setupRRTypes.value = []
     form.value.rrTypeId = ''
+    strategySearchQ.value = ''
     if (newSetupId) {
       ;[strategies.value, setupSessions.value, customTags.value, setupRRTypes.value] =
         await Promise.all([
@@ -153,6 +154,8 @@ function detectSession(timeStr) {
 }
 
 // ── Sorted display lists ─────────────────────────────────────────────────────
+const strategySearchQ = ref('')
+
 const sortedStrategies = computed(() =>
   [...strategies.value].sort((a, b) => {
     const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
@@ -160,6 +163,12 @@ const sortedStrategies = computed(() =>
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   })
 )
+
+const filteredStrategies = computed(() => {
+  const q = strategySearchQ.value.toLowerCase().trim()
+  if (!q) return sortedStrategies.value
+  return sortedStrategies.value.filter((s) => s.name.toLowerCase().includes(q))
+})
 
 const sortedCustomTags = computed(() =>
   [...customTags.value].sort((a, b) =>
@@ -648,9 +657,16 @@ function clearOptionalFields() {
             @click="showQuickAddStrategy = false; quickAddStrategyName = ''"
           >Cancel</button>
         </div>
+        <input
+          v-if="strategies.length > 5"
+          v-model="strategySearchQ"
+          type="text"
+          class="strategy-search"
+          placeholder="ค้นหา Strategy…"
+        />
         <div class="tag-picker">
           <button
-            v-for="s in sortedStrategies"
+            v-for="s in filteredStrategies"
             :key="s.id"
             type="button"
             class="tag-chip tag-chip--blue"
@@ -660,9 +676,8 @@ function clearOptionalFields() {
             {{ s.name }}
           </button>
           <span v-if="!form.setupId" class="tag-empty">Select a setup first</span>
-          <span v-else-if="!strategies.length" class="tag-empty"
-            >No strategies linked to this setup</span
-          >
+          <span v-else-if="!strategies.length" class="tag-empty">No strategies linked to this setup</span>
+          <span v-else-if="strategySearchQ && !filteredStrategies.length" class="tag-empty">ไม่พบ "{{ strategySearchQ }}"</span>
         </div>
       </div>
 
@@ -1204,6 +1219,23 @@ button:disabled {
   font-size: 0.78rem;
   color: #fb923c;
   margin-top: 3px;
+}
+
+/* ── Strategy search ── */
+.strategy-search {
+  width: 220px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--bg-mute);
+  color: var(--text-1);
+  font-size: 0.83rem;
+  margin-bottom: 6px;
+  display: block;
+}
+.strategy-search:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* ── Quick-add strategy ── */
