@@ -355,4 +355,12 @@ function runMigrations(db) {
     `)
     setVersion(12)
   }
+
+  // ── v13: sortOrder on Setup_Strategies ────────────────────────────────────
+  if (version < 13) {
+    try {
+      db.exec(`ALTER TABLE Setup_Strategies ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0`)
+    } catch {}
+    setVersion(13)
+  }
 }

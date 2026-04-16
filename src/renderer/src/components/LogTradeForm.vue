@@ -154,9 +154,11 @@ function detectSession(timeStr) {
 
 // ── Sorted display lists ─────────────────────────────────────────────────────
 const sortedStrategies = computed(() =>
-  [...strategies.value].sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-  )
+  [...strategies.value].sort((a, b) => {
+    const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+    if (orderDiff !== 0) return orderDiff
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  })
 )
 
 const sortedCustomTags = computed(() =>
@@ -192,6 +194,32 @@ function toggleStrategy(id) {
   const idx = selectedStrategyIds.value.indexOf(id)
   if (idx === -1) selectedStrategyIds.value.push(id)
   else selectedStrategyIds.value.splice(idx, 1)
+}
+
+// ── Quick-add strategy ────────────────────────────────────────────────────────
+const showQuickAddStrategy = ref(false)
+const quickAddStrategyName = ref('')
+const isAddingStrategy = ref(false)
+
+async function quickAddStrategy() {
+  const name = quickAddStrategyName.value.trim()
+  if (!name) return
+  isAddingStrategy.value = true
+  try {
+    const newStrategy = await window.api.createStrategy({ name, description: '' })
+    if (form.value.setupId) {
+      await window.api.linkStrategy(Number(form.value.setupId), newStrategy.id)
+      strategies.value = await window.api.getStrategiesForSetup(Number(form.value.setupId))
+    }
+    selectedStrategyIds.value.push(newStrategy.id)
+    quickAddStrategyName.value = ''
+    showQuickAddStrategy.value = false
+    showToast('success', `เพิ่ม Strategy "${name}" แล้ว`)
+  } catch (err) {
+    showToast('error', err.message ?? 'เพิ่มไม่สำเร็จ')
+  } finally {
+    isAddingStrategy.value = false
+  }
 }
 
 // ── Custom Tag toggle ─────────────────────────────────────────────────────────
@@ -588,7 +616,38 @@ function clearOptionalFields() {
 
       <!-- Strategy (multi-select chip picker) -->
       <div class="form-group full-width">
-        <label>Strategy * <span class="auto-tag">(multi-select)</span></label>
+        <label>
+          Strategy * <span class="auto-tag">(multi-select)</span>
+          <button
+            type="button"
+            class="btn-quick-add"
+            :class="{ active: showQuickAddStrategy }"
+            @click="showQuickAddStrategy = !showQuickAddStrategy; quickAddStrategyName = ''"
+            title="เพิ่ม Strategy ใหม่"
+          >+ New</button>
+        </label>
+        <div v-if="showQuickAddStrategy" class="quick-add-row">
+          <input
+            v-model="quickAddStrategyName"
+            type="text"
+            placeholder="ชื่อ Strategy…"
+            class="quick-add-input"
+            maxlength="80"
+            @keydown.enter.prevent="quickAddStrategy"
+            @keydown.esc="showQuickAddStrategy = false; quickAddStrategyName = ''"
+          />
+          <button
+            type="button"
+            class="btn-quick-save"
+            :disabled="!quickAddStrategyName.trim() || isAddingStrategy"
+            @click="quickAddStrategy"
+          >{{ isAddingStrategy ? '…' : 'Save' }}</button>
+          <button
+            type="button"
+            class="btn-quick-cancel"
+            @click="showQuickAddStrategy = false; quickAddStrategyName = ''"
+          >Cancel</button>
+        </div>
         <div class="tag-picker">
           <button
             v-for="s in sortedStrategies"
@@ -1145,6 +1204,68 @@ button:disabled {
   font-size: 0.78rem;
   color: #fb923c;
   margin-top: 3px;
+}
+
+/* ── Quick-add strategy ── */
+.btn-quick-add {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  padding: 2px 9px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  vertical-align: middle;
+}
+.btn-quick-add:hover,
+.btn-quick-add.active {
+  background: var(--accent);
+  color: #fff;
+}
+.quick-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.quick-add-input {
+  flex: 0 0 260px;
+  min-width: 0;
+}
+.btn-quick-save {
+  padding: 6px 16px;
+  font-size: 0.84rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn-quick-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-quick-cancel {
+  padding: 6px 12px;
+  font-size: 0.84rem;
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.btn-quick-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 
 .session-display.session-empty {

@@ -10,8 +10,31 @@ const newSetup = ref({ name: '', description: '' })
 const newStrategy = ref({ name: '', description: '' })
 const newSymbol = ref('')
 
+// Search queries
+const stratSearchQ = ref('')
+const symbolSearchQ = ref('')
+const tagSearchQ = ref('')
+
+// Filtered lists for search
+const filteredStrategiesForLink = computed(() => {
+  const q = stratSearchQ.value.toLowerCase().trim()
+  if (!q) return strategies.value
+  return strategies.value.filter((s) => s.name.toLowerCase().includes(q))
+})
+const filteredSymbolsList = computed(() => {
+  const q = symbolSearchQ.value.toLowerCase().trim()
+  if (!q) return symbols.value
+  return symbols.value.filter((s) => s.name.toLowerCase().includes(q))
+})
+const filteredCustomTagsForLink = computed(() => {
+  const q = tagSearchQ.value.toLowerCase().trim()
+  if (!q) return customTags.value
+  return customTags.value.filter((t) => t.name.toLowerCase().includes(q))
+})
+
 // Bulk link: strategies ↔ setup
 const stratLink = ref({ setupId: '', checkedIds: [], linkedIds: [] })
+const stratSortOrders = ref({}) // { [strategyId]: number }
 const stratAllChecked = computed(
   () =>
     strategies.value.length > 0 &&
@@ -141,10 +164,14 @@ async function createSymbol() {
 async function onStratLinkSetupChange() {
   stratLink.value.checkedIds = []
   stratLink.value.linkedIds = []
+  stratSortOrders.value = {}
   if (!stratLink.value.setupId) return
   const rows = await window.api.getStrategiesForSetup(Number(stratLink.value.setupId))
   stratLink.value.checkedIds = rows.map((s) => s.id)
   stratLink.value.linkedIds = rows.map((s) => s.id)
+  for (const s of rows) {
+    stratSortOrders.value[s.id] = s.sortOrder ?? 0
+  }
 }
 
 function toggleAllStrats(on) {
@@ -161,6 +188,9 @@ async function saveStrategyLinks() {
     const toUnlink = linked.filter((id) => !checked.includes(id))
     for (const id of toLink) await window.api.linkStrategy(setupId, id)
     for (const id of toUnlink) await window.api.unlinkStrategy(setupId, id)
+    for (const id of checked) {
+      await window.api.updateStrategyOrder(setupId, id, Number(stratSortOrders.value[id] ?? 0))
+    }
     stratLink.value.linkedIds = checked
     flashMsg('Strategies saved.')
     await loadAll()
@@ -447,12 +477,19 @@ function flashError(e) {
           <input v-model="newSymbol" placeholder="e.g. XAUUSD" required />
           <button type="submit">Add Symbol</button>
         </form>
+        <input
+          v-if="symbols.length > 4"
+          v-model="symbolSearchQ"
+          class="search-input"
+          placeholder="ค้นหา Symbol…"
+        />
         <ul class="item-list">
-          <li v-for="s in symbols" :key="s.id">
+          <li v-for="s in filteredSymbolsList" :key="s.id">
             <strong>{{ s.name }}</strong>
             <button class="btn-del" @click="deleteSymbol(s.id)">✕</button>
           </li>
           <li v-if="!symbols.length" class="empty">No symbols yet.</li>
+          <li v-else-if="!filteredSymbolsList.length" class="empty">ไม่พบ "{{ symbolSearchQ }}"</li>
         </ul>
       </section>
 
@@ -466,6 +503,12 @@ function flashError(e) {
             <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
         </div>
+        <input
+          v-if="stratLink.setupId && strategies.length"
+          v-model="stratSearchQ"
+          class="search-input"
+          placeholder="ค้นหา Strategy…"
+        />
         <div v-if="stratLink.setupId && strategies.length" class="check-list">
           <label class="check-item check-all">
             <input
@@ -476,10 +519,22 @@ function flashError(e) {
             />
             <span>All</span>
           </label>
-          <label v-for="s in strategies" :key="s.id" class="check-item">
+          <label v-for="s in filteredStrategiesForLink" :key="s.id" class="check-item">
             <input type="checkbox" v-model="stratLink.checkedIds" :value="s.id" />
-            <span>{{ s.name }}</span>
+            <span class="check-item-name">{{ s.name }}</span>
+            <input
+              v-if="stratLink.checkedIds.includes(s.id)"
+              v-model.number="stratSortOrders[s.id]"
+              type="number"
+              min="0"
+              class="sort-order-input"
+              placeholder="0"
+              title="ลำดับการแสดงผล (น้อยสุด = อยู่ก่อน)"
+              @click.stop
+              @mousedown.stop
+            />
           </label>
+          <p v-if="stratSearchQ && !filteredStrategiesForLink.length" class="empty">ไม่พบ "{{ stratSearchQ }}"</p>
           <button class="btn-save" @click="saveStrategyLinks">Save</button>
         </div>
         <p v-else-if="stratLink.setupId" class="empty">No strategies available.</p>
@@ -509,6 +564,12 @@ function flashError(e) {
             <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
         </div>
+        <input
+          v-if="tagLink.setupId && customTags.length"
+          v-model="tagSearchQ"
+          class="search-input"
+          placeholder="ค้นหา Custom Tag…"
+        />
         <div v-if="tagLink.setupId && customTags.length" class="check-list">
           <label class="check-item check-all">
             <input
@@ -519,10 +580,11 @@ function flashError(e) {
             />
             <span>All</span>
           </label>
-          <label v-for="t in customTags" :key="t.id" class="check-item">
+          <label v-for="t in filteredCustomTagsForLink" :key="t.id" class="check-item">
             <input type="checkbox" v-model="tagLink.checkedIds" :value="t.id" />
             <span>{{ t.name }}</span>
           </label>
+          <p v-if="tagSearchQ && !filteredCustomTagsForLink.length" class="empty">ไม่พบ "{{ tagSearchQ }}"</p>
           <button class="btn-save btn-save--green" @click="saveCustomTagLinks">Save</button>
         </div>
         <p v-else-if="tagLink.setupId" class="empty">No custom tags available.</p>
@@ -933,6 +995,22 @@ function flashError(e) {
   font-size: 0.88rem;
 }
 
+.search-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-1);
+  font-size: 0.84rem;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .check-list {
   display: flex;
   flex-direction: column;
@@ -960,6 +1038,27 @@ function flashError(e) {
   height: 15px;
   cursor: pointer;
   flex-shrink: 0;
+}
+.check-item-name {
+  flex: 1;
+  min-width: 0;
+}
+.sort-order-input {
+  width: 52px;
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--bg-mute);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: text;
+}
+.sort-order-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .check-all {
   border-bottom: 1px solid var(--border-soft);

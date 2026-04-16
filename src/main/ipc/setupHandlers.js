@@ -38,13 +38,20 @@ export function registerSetupHandlers() {
   handle('setups:getStrategies', (_event, setupId) => {
     return db
       .prepare(
-        `SELECT s.*
+        `SELECT s.*, ss.sortOrder
          FROM Strategies s
          INNER JOIN Setup_Strategies ss ON s.id = ss.strategyId
          WHERE ss.setupId = ?
-         ORDER BY s.name`
+         ORDER BY ss.sortOrder, s.name`
       )
       .all(setupId)
+  })
+
+  handle('setups:updateStrategyOrder', (_event, { setupId, strategyId, sortOrder }) => {
+    db.prepare(
+      'UPDATE Setup_Strategies SET sortOrder = ? WHERE setupId = ? AND strategyId = ?'
+    ).run(sortOrder, setupId, strategyId)
+    return { ok: true }
   })
 
   // ── Create ────────────────────────────────────────────────────────────────

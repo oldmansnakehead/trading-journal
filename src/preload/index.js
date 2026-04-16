@@ -11,6 +11,8 @@ const api = {
   unlinkStrategy: (setupId, strategyId) =>
     ipcRenderer.invoke('setups:unlinkStrategy', { setupId, strategyId }),
   getStrategiesForSetup: (setupId) => ipcRenderer.invoke('setups:getStrategies', setupId),
+  updateStrategyOrder: (setupId, strategyId, sortOrder) =>
+    ipcRenderer.invoke('setups:updateStrategyOrder', { setupId, strategyId, sortOrder }),
   linkCustomTag: (setupId, customTagId) =>
     ipcRenderer.invoke('setups:linkCustomTag', { setupId, customTagId }),
   unlinkCustomTag: (setupId, customTagId) =>
