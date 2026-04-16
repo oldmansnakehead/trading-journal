@@ -133,6 +133,15 @@ const settingsLoaded = ref(false)
 const customColumnName = ref('Custom Tag')
 const dbPath = ref('')
 
+// ── Manual row exclusion (UI-only, reset on each query) ──────────────────────
+const manualExcludeIds = ref(new Set())
+function toggleManualExclude(id) {
+  const s = new Set(manualExcludeIds.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  manualExcludeIds.value = s
+}
+
 const showCharts = ref(false) // toggle visibility
 const returnType = ref('simple') // 'simple' or 'log'
 const pnlGroupBy = ref('day') // day, symbol, session, rrType, rating, news
@@ -240,19 +249,16 @@ const sortedRows = computed(() => {
   let currentConsecutiveLosses = 0
 
   return sortedResults.value.map((row, i) => {
-    // Skip test items from financial/progression calculations
-    if (row.isTest) {
+    // Manually excluded rows don't affect running balance/stats
+    if (manualExcludeIds.value.has(row.id)) {
       return {
         ...row,
-        risk: 0,
-        reward: 0,
-        rrr: 0,
-        dollarPnl: 0,
-        pctPnl: 0,
+        risk: 0, reward: 0, rrr: 0, dollarPnl: 0, pctPnl: 0,
         balance: runningBalance,
         drawdown: +((runningBalance / peakBalance - 1) * 100).toFixed(2),
-        holding: '—', // Placeholder, could calc if needed, but keeping it simple
-        no: i + 1
+        holding: '—',
+        no: i + 1,
+        _manualExcluded: true
       }
     }
 
@@ -375,7 +381,7 @@ watch([filteredRows, pageSize], () => {
 // ── Enhanced Summary ──────────────────────────────────────────────────────────
 const enhancedSummary = computed(() => {
   if (!summary.value) return null
-  const rows = sortedRows.value.filter(r => !r.isTest && !r.isExcluded)
+  const rows = sortedRows.value.filter(r => !r._manualExcluded)
   const wins = rows.filter((r) => r.result === 'Win')
   const losses = rows.filter((r) => r.result === 'Loss')
 
@@ -572,6 +578,7 @@ async function runQuery() {
     ])
     results.value = rows
     summary.value = stat
+    manualExcludeIds.value = new Set()
 
   } catch (e) {
     loadError.value = e.message ?? 'โหลดข้อมูลไม่สำเร็จ'
@@ -1587,6 +1594,7 @@ function openInBrowser(url) {
       <table v-if="sortedRows.length">
         <thead>
           <tr>
+            <th class="excl-check-th" title="ติ๊กเพื่อไม่นับรวม stat">—</th>
             <th>No.</th>
             <th>ทดสอบ</th>
             <th>Entry Date</th>
@@ -1623,9 +1631,18 @@ function openInBrowser(url) {
             :key="row.id"
             :class="[
               row.result === 'Win' ? 'row-win' : row.result === 'Loss' ? 'row-loss' : '',
-              row.isExcluded ? 'row-excluded' : ''
+              row.isExcluded ? 'row-excluded' : '',
+              row._manualExcluded ? 'row-manual-excl' : ''
             ]"
           >
+            <td class="excl-check-cell">
+              <input
+                type="checkbox"
+                :checked="manualExcludeIds.has(row.id)"
+                @change="toggleManualExclude(row.id)"
+                title="ไม่นับรวม stat"
+              />
+            </td>
             <td class="num">{{ row.no }}</td>
             <td class="test-cell">{{ row.isTest ? '🧪' : '—' }}</td>
             <td>{{ fmtDate(row.entryDateTime) }}</td>
@@ -2691,9 +2708,34 @@ tr.row-loss td {
 tr.row-excluded {
   opacity: 0.6;
 }
+tr.row-manual-excl {
+  opacity: 0.35;
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+}
+tr.row-manual-excl td {
+  color: var(--text-3);
+}
 .test-cell, .excl-cell {
   text-align: center;
   font-size: 0.9rem;
+}
+.excl-check-th {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-3);
+  min-width: 28px;
+  width: 28px;
+}
+.excl-check-cell {
+  text-align: center;
+  padding: 0 4px;
+}
+.excl-check-cell input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--neg-text);
 }
 .empty-msg {
   text-align: center;
