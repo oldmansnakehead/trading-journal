@@ -5,24 +5,27 @@ import DashboardView     from './views/DashboardView.vue'
 import SetupManagerView  from './views/SetupManagerView.vue'
 import CalculatorView    from './views/CalculatorView.vue'
 import ImportView        from './views/ImportView.vue'
+import MonteCarloView    from './views/MonteCarloView.vue'
 
 const tabs = [
-  { id: 'journal',  label: '+ Log Trade',  icon: '📝' },
-  { id: 'dashboard', label: 'Dashboard',   icon: '📊' },
-  { id: 'manager',  label: 'Setup Manager', icon: '⚙️' },
-  { id: 'calculator', label: 'Calculator',   icon: '🧮' },
-  { id: 'import',    label: 'Import JSON',   icon: '📥' }
+  { id: 'journal',     label: '+ Log Trade',   icon: '📝' },
+  { id: 'dashboard',   label: 'Dashboard',     icon: '📊' },
+  { id: 'montecarlo',  label: 'Monte Carlo',   icon: '🎲' },
+  { id: 'manager',     label: 'Setup Manager', icon: '⚙️' },
+  { id: 'calculator',  label: 'Calculator',    icon: '🧮' },
+  { id: 'import',      label: 'Import JSON',   icon: '📥' }
 ]
 
 const activeTab = ref('journal')
 const sidebarCollapsed = ref(false)
 
 const viewMap = {
-  journal:   JournalEntryView,
-  dashboard: DashboardView,
-  manager:   SetupManagerView,
+  journal:    JournalEntryView,
+  dashboard:  DashboardView,
+  montecarlo: MonteCarloView,
+  manager:    SetupManagerView,
   calculator: CalculatorView,
-  import:    ImportView
+  import:     ImportView
 }
 
 const isDark = ref(true)

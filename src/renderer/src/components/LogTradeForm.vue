@@ -20,6 +20,15 @@ const imageUrlInputs = ref([''])
 const hasNews = ref(false)
 const colorRating = ref('')
 const setupRRTypes = ref([]) // RR types linked to the selected setup
+const setupPlaybook = ref('')
+const playbookOpen = ref(false)
+const playbookCopied = ref(false)
+
+function copyPlaybook() {
+  navigator.clipboard.writeText(setupPlaybook.value)
+  playbookCopied.value = true
+  setTimeout(() => { playbookCopied.value = false }, 2000)
+}
 
 const slHalf = ref(false)
 const isSubmitting = ref(false)
@@ -45,14 +54,15 @@ const form = ref({
   exitTime: '',
   symbol: '',
   session: '',
-  position: 'Buy',
-  directionBias: 'Bullish',
+  position: '',
+  directionBias: '',
   setupId: '',
   tf: 'M1',
   rrTypeId: '',
+  manualRR: '',
   slPoint: '',
   tpPoint: '',
-  result: 'Win',
+  result: '',
   notes: '',
   isTest: false,
   isExcluded: false
@@ -81,15 +91,18 @@ watch(
     customTags.value = []
     setupSessions.value = []
     setupRRTypes.value = []
+    setupPlaybook.value = ''
+    playbookOpen.value = false
     form.value.rrTypeId = ''
     strategySearchQ.value = ''
     if (newSetupId) {
-      ;[strategies.value, setupSessions.value, customTags.value, setupRRTypes.value] =
+      ;[strategies.value, setupSessions.value, customTags.value, setupRRTypes.value, setupPlaybook.value] =
         await Promise.all([
           window.api.getStrategiesForSetup(Number(newSetupId)),
           window.api.getSetupSessions(Number(newSetupId)),
           window.api.getCustomTagsForSetup(Number(newSetupId)),
-          window.api.getRRTypesForSetup(Number(newSetupId))
+          window.api.getRRTypesForSetup(Number(newSetupId)),
+          window.api.getSetupPlaybook(Number(newSetupId))
         ])
       if (strategies.value.length === 1) {
         selectedStrategyIds.value = [strategies.value[0].id]
@@ -190,8 +203,11 @@ const selectedRRType = computed(
 
 const tpComputed = computed(() => {
   const sl = parseFloat(form.value.slPoint)
-  if (!sl || !selectedRRType.value) return ''
-  return +(sl * selectedRRType.value.ratio).toFixed(2)
+  if (!sl) return ''
+  const manualRR = parseFloat(form.value.manualRR)
+  const ratio = manualRR > 0 ? manualRR : selectedRRType.value?.ratio
+  if (!ratio) return ''
+  return +(sl * ratio).toFixed(2)
 })
 
 watch(tpComputed, (val) => {
@@ -346,6 +362,14 @@ async function handleSubmit() {
     showToast('error', 'กรุณาเลือก Symbol')
     return
   }
+  if (!form.value.position) {
+    showToast('error', 'กรุณาเลือก Position (Buy / Sell)')
+    return
+  }
+  if (!form.value.result) {
+    showToast('error', 'กรุณาเลือก Result (Win / Loss / Breakeven)')
+    return
+  }
   if (!colorRating.value) {
     showToast('error', 'กรุณาเลือกระดับสี (Quality)')
     return
@@ -376,6 +400,7 @@ async function handleSubmit() {
       tf: form.value.tf,
       rrTypeId: Number(form.value.rrTypeId),
       rrType: selectedRRType.value?.name ?? '',
+      manualRR: form.value.manualRR !== '' ? parseFloat(form.value.manualRR) : null,
       slPoint: form.value.slPoint !== '' ? parseFloat(form.value.slPoint) : null,
       tpPoint: form.value.tpPoint !== '' ? parseFloat(form.value.tpPoint) : null,
       result: form.value.result,
@@ -411,12 +436,13 @@ function resetForm() {
     exitTime: '',
     symbol: '',
     session: '',
-    position: 'Buy',
-    directionBias: 'Bullish',
+    position: '',
+    directionBias: '',
     setupId: '',
     tf: 'M1',
     rrTypeId: '',
-    result: 'Win',
+    manualRR: '',
+    result: '',
     notes: '',
     isTest: false,
     isExcluded: false
@@ -445,7 +471,12 @@ function clearOptionalFields() {
   }
 
   colorRating.value = ''
+  hasNews.value = false
+  form.value.position = ''
+  form.value.directionBias = ''
+  form.value.result = ''
   form.value.rrTypeId = ''
+  form.value.manualRR = ''
   form.value.slPoint = ''
   form.value.tpPoint = ''
   form.value.isTest = false
@@ -623,6 +654,22 @@ function clearOptionalFields() {
         </div>
       </div>
 
+      <!-- Setup Playbook (collapsible) -->
+      <div v-if="form.setupId && setupPlaybook" class="form-group full-width playbook-panel">
+        <div class="playbook-header">
+          <button type="button" class="playbook-toggle" @click="playbookOpen = !playbookOpen">
+            <span class="playbook-toggle-icon">{{ playbookOpen ? '▾' : '▸' }}</span>
+            📋 Playbook: {{ setups.find(s => s.id == form.setupId)?.name }}
+          </button>
+          <button type="button" class="playbook-copy-btn" :class="{ copied: playbookCopied }" @click.stop="copyPlaybook">
+            {{ playbookCopied ? '✓ Copied' : 'Copy' }}
+          </button>
+        </div>
+        <div v-if="playbookOpen" class="playbook-body">
+          <pre class="playbook-content">{{ setupPlaybook }}</pre>
+        </div>
+      </div>
+
       <!-- Strategy (multi-select chip picker) -->
       <div class="form-group full-width">
         <label>
@@ -706,6 +753,10 @@ function clearOptionalFields() {
           <span v-if="form.setupId && !setupRRTypes.length" class="rr-hint">
             ⚠ No RR types linked — go to Setup Manager → RR Types
           </span>
+        </div>
+        <div class="form-group">
+          <label>Manual RR <span class="auto-tag">(override)</span></label>
+          <input v-model="form.manualRR" type="number" step="0.1" min="0" placeholder="e.g. 5" />
         </div>
         <div class="form-group">
           <label>
@@ -1302,6 +1353,83 @@ button:disabled {
 
 .session-display.session-empty {
   color: var(--text-3);
+}
+
+/* Playbook panel */
+.playbook-panel {
+  gap: 0;
+}
+.playbook-header {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+.playbook-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  color: var(--text-1);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  flex: 1;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+}
+.playbook-toggle:hover {
+  background: var(--bg-hover, #2a2a3a);
+  border-color: var(--accent, #6c63ff);
+}
+.playbook-toggle-icon {
+  font-style: normal;
+  font-size: 0.8rem;
+  color: var(--text-2);
+  min-width: 12px;
+}
+.playbook-copy-btn {
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-2);
+  font-size: 0.8rem;
+  padding: 0 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.playbook-copy-btn:hover {
+  background: var(--bg-hover, #2a2a3a);
+  color: var(--text-1);
+}
+.playbook-copy-btn.copied {
+  color: #4ade80;
+}
+.playbook-body {
+  border: 1px solid var(--border-soft);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: var(--bg-card, #1a1a28);
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.playbook-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--text-1);
+  user-select: text;
+  cursor: text;
 }
 </style>
 

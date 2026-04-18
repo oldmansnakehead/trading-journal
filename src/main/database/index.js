@@ -363,4 +363,20 @@ function runMigrations(db) {
     } catch {}
     setVersion(13)
   }
+
+  // ── v14: manualRR override ────────────────────────────────────────────────
+  if (version < 14) {
+    try {
+      db.exec(`ALTER TABLE Journals ADD COLUMN manualRR REAL`)
+    } catch {}
+    setVersion(14)
+  }
+
+  // ── v15: Setup playbook (long-form notes per setup) ───────────────────────
+  if (version < 15) {
+    try {
+      db.exec(`ALTER TABLE TradeSetups ADD COLUMN playbook TEXT`)
+    } catch {}
+    setVersion(15)
+  }
 }

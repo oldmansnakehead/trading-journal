@@ -74,7 +74,8 @@ function makeSlot() {
 const filters = ref({
   setupSlots: [makeSlot()],
   dateFrom: '',
-  dateTo: ''
+  dateTo: '',
+  timeRanges: []   // [{ from: 'HH:MM', to: 'HH:MM' }]
 })
 const results = ref([])
 const summary = ref(null)
@@ -213,20 +214,36 @@ function parseRRLegacy(rrTypeStr) {
   return m ? Number(m[1]) : 0
 }
 
-// Returns { risk, reward, rrr } based on ratio or legacy string
-function calcRRR(result, rrTypeRatio, legacyRrTypeStr) {
-  const rr = rrTypeRatio != null ? parseFloat(rrTypeRatio) : parseRRLegacy(legacyRrTypeStr)
+// Returns { risk, reward, rrr } based on manualRR override, ratio, or legacy string
+function calcRRR(result, rrTypeRatio, legacyRrTypeStr, manualRR) {
+  const rr = (manualRR != null && manualRR > 0)
+    ? parseFloat(manualRR)
+    : (rrTypeRatio != null ? parseFloat(rrTypeRatio) : parseRRLegacy(legacyRrTypeStr))
   if (result === 'Win') return { risk: 0, reward: rr, rrr: rr }
   if (result === 'Loss') return { risk: -1, reward: 0, rrr: -1 }
   return { risk: 0, reward: 0, rrr: 0 } // Breakeven
 }
 
+// ── Time-range filter (frontend, applied before sort) ────────────────────────
+const timeFilteredResults = computed(() => {
+  const ranges = filters.value.timeRanges.filter((r) => r.from && r.to)
+  if (!ranges.length) return results.value
+  return results.value.filter((row) => {
+    const dt = row.entryDateTime
+    if (!dt) return false
+    const d = new Date(dt)
+    if (isNaN(d)) return false
+    const t = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+    return ranges.some((r) => t >= r.from && t <= r.to)
+  })
+})
+
 // ── Sort raw results before enriching (so `no` follows sorted order) ──────────
 const sortedResults = computed(() => {
-  if (!sortCol.value) return results.value
+  if (!sortCol.value) return timeFilteredResults.value
   const col = sortCol.value
   const dir = sortDir.value === 'asc' ? 1 : -1
-  return [...results.value].sort((a, b) => {
+  return [...timeFilteredResults.value].sort((a, b) => {
     let va = a[col]
     let vb = b[col]
     if (va == null) return 1
@@ -262,7 +279,7 @@ const sortedRows = computed(() => {
       }
     }
 
-    const { risk, reward, rrr } = calcRRR(row.result, row.rrTypeRatio, row.rrType)
+    const { risk, reward, rrr } = calcRRR(row.result, row.rrTypeRatio, row.rrType, row.manualRR)
     let appliedRiskPct = baseRiskPct
     if (currentConsecutiveLosses >= 3) {
       appliedRiskPct = 0.5 / 100 // Temporary 0.5% risk
@@ -570,7 +587,8 @@ async function runQuery() {
         colorRatings: [...sl.colorRatings]
       })),
       dateFrom: isoFrom ? `${isoFrom}T00:00` : null,
-      dateTo: isoTo ? `${isoTo}T23:59` : null
+      dateTo: isoTo ? `${isoTo}T23:59` : null,
+      timeRanges: []
     }
     const [rows, stat] = await Promise.all([
       window.api.queryJournals(f),
@@ -817,8 +835,21 @@ function updatePnlChart(rows) {
 }
 
 function clearFilters() {
-  filters.value = { setupSlots: [makeSlot()], dateFrom: '', dateTo: '' }
+  filters.value = { setupSlots: [makeSlot()], dateFrom: '', dateTo: '', timeRanges: [] }
   runQuery()
+}
+
+function addTimeRange() {
+  filters.value.timeRanges.push({ from: '', to: '' })
+}
+function removeTimeRange(i) {
+  filters.value.timeRanges.splice(i, 1)
+}
+function onTimeRangeInput(tr, field, e) {
+  let v = e.target.value.replace(/[^0-9]/g, '').slice(0, 4)
+  if (v.length >= 3) v = v.slice(0, 2) + ':' + v.slice(2)
+  e.target.value = v
+  tr[field] = v
 }
 
 onMounted(async () => {
@@ -902,6 +933,42 @@ function fmtTime(dt) {
 async function deleteRow(id) {
   if (!confirm('Delete this journal entry?')) return
   await window.api.deleteJournal(id)
+  selectedIds.value.delete(id)
+  selectedIds.value = new Set(selectedIds.value)
+  await runQuery()
+}
+
+// ── Multi-select / Bulk Delete ────────────────────────────────────────────────
+const selectedIds = ref(new Set())
+
+const allPageSelected = computed(() => {
+  const rows = paginatedRows.value
+  return rows.length > 0 && rows.every((r) => selectedIds.value.has(r.id))
+})
+
+function toggleSelectAll() {
+  const s = new Set(selectedIds.value)
+  if (allPageSelected.value) {
+    paginatedRows.value.forEach((r) => s.delete(r.id))
+  } else {
+    paginatedRows.value.forEach((r) => s.add(r.id))
+  }
+  selectedIds.value = s
+}
+
+function toggleSelectRow(id) {
+  const s = new Set(selectedIds.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  selectedIds.value = s
+}
+
+async function bulkDelete() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  if (!confirm(`ลบ ${ids.length} รายการ?`)) return
+  await Promise.all(ids.map((id) => window.api.deleteJournal(id)))
+  selectedIds.value = new Set()
   await runQuery()
 }
 
@@ -975,7 +1042,8 @@ async function openEdit(row) {
     colorRating: row.colorRating ?? '',
     hasNews: !!row.hasNews,
     isTest: !!row.isTest,
-    isExcluded: !!row.isExcluded
+    isExcluded: !!row.isExcluded,
+    manualRR: row.manualRR != null ? String(row.manualRR) : ''
   }
   editImageUrlInputs.value = row.imageUrls?.length ? [...row.imageUrls] : ['']
   editSelectedStrategyIds.value = []
@@ -1094,6 +1162,7 @@ async function saveEdit() {
       hasNews: editForm.value.hasNews ? 1 : 0,
       isTest: editForm.value.isTest ? 1 : 0,
       isExcluded: editForm.value.isExcluded ? 1 : 0,
+      manualRR: editForm.value.manualRR !== '' ? parseFloat(editForm.value.manualRR) : null,
       timeBos: editSelectedCustomTagIds.value
         .map((id) => editAllCustomTags.value.find((t) => t.id === id)?.name)
         .filter(Boolean)
@@ -1419,6 +1488,34 @@ function openInBrowser(url) {
         </div>
       </div>
 
+      <!-- ── Time Ranges (shared) ───────────────────────────────────────────── -->
+      <div class="filter-row time-range-row">
+        <div class="filter-label">Time Ranges</div>
+        <div class="time-ranges-body">
+          <div v-for="(tr, i) in filters.timeRanges" :key="i" class="time-range-item">
+            <input
+              type="text"
+              :value="tr.from"
+              class="time-input"
+              placeholder="HH:MM"
+              maxlength="5"
+              @input="onTimeRangeInput(tr, 'from', $event)"
+            />
+            <span class="time-dash">–</span>
+            <input
+              type="text"
+              :value="tr.to"
+              class="time-input"
+              placeholder="HH:MM"
+              maxlength="5"
+              @input="onTimeRangeInput(tr, 'to', $event)"
+            />
+            <button type="button" class="btn-remove-range" @click="removeTimeRange(i)" title="ลบช่วงเวลา">✕</button>
+          </div>
+          <button type="button" class="btn-add-range" @click="addTimeRange">+ เพิ่มช่วงเวลา</button>
+        </div>
+      </div>
+
       <div class="filter-actions">
         <button class="btn-primary" :disabled="isLoading" @click="runQuery">
           {{ isLoading ? 'Loading…' : 'Apply Filters' }}
@@ -1591,10 +1688,20 @@ function openInBrowser(url) {
         </span>
       </div>
 
+      <!-- Bulk delete toolbar -->
+      <div v-if="selectedIds.size > 0" class="bulk-toolbar">
+        <span>เลือก {{ selectedIds.size }} รายการ</span>
+        <button class="btn-bulk-delete" @click="bulkDelete">🗑 ลบที่เลือก</button>
+        <button class="btn-bulk-clear" @click="selectedIds = new Set()">ยกเลิก</button>
+      </div>
+
       <table v-if="sortedRows.length">
         <thead>
           <tr>
             <th class="excl-check-th" title="ติ๊กเพื่อไม่นับรวม stat">—</th>
+            <th class="sel-check-th">
+              <input type="checkbox" :checked="allPageSelected" @change="toggleSelectAll" title="เลือกทั้งหน้า" />
+            </th>
             <th>No.</th>
             <th>ทดสอบ</th>
             <th>Entry Date</th>
@@ -1643,6 +1750,14 @@ function openInBrowser(url) {
                 title="ไม่นับรวม stat"
               />
             </td>
+            <td class="sel-check-cell">
+              <input
+                type="checkbox"
+                :checked="selectedIds.has(row.id)"
+                @change="toggleSelectRow(row.id)"
+                title="เลือกเพื่อลบ"
+              />
+            </td>
             <td class="num">{{ row.no }}</td>
             <td class="test-cell">{{ row.isTest ? '🧪' : '—' }}</td>
             <td>{{ fmtDate(row.entryDateTime) }}</td>
@@ -1669,7 +1784,7 @@ function openInBrowser(url) {
             <td :class="['result-cell', row.result.toLowerCase()]">{{ row.result }}</td>
             <td :class="row.risk < 0 ? 'neg' : ''">{{ row.risk }}</td>
             <td :class="row.reward > 0 ? 'pos' : ''">{{ row.reward }}</td>
-            <td :class="row.rrr > 0 ? 'pos' : row.rrr < 0 ? 'neg' : ''">{{ row.rrr }}</td>
+            <td :class="row.rrr > 0 ? 'pos' : row.rrr < 0 ? 'neg' : ''" :title="row.manualRR ? 'Manual RR: ' + row.manualRR : ''">{{ row.rrr }}<span v-if="row.manualRR" class="manual-rr-badge">M</span></td>
             <td :class="row.dollarPnl > 0 ? 'pos' : row.dollarPnl < 0 ? 'neg' : ''">
               ${{ row.dollarPnl }}
             </td>
@@ -1900,6 +2015,10 @@ function openInBrowser(url) {
                 <option value="" disabled>{{ !editForm.setupId ? 'Select Setup first' : 'Select RR Type' }}</option>
                 <option v-for="r in editRRTypes" :key="r.id" :value="String(r.id)">{{ r.name }}</option>
               </select>
+            </div>
+            <div class="edit-group">
+              <label>Manual RR <span class="auto-tag">(override)</span></label>
+              <input v-model="editForm.manualRR" type="number" step="0.1" min="0" placeholder="e.g. 5" />
             </div>
             <div class="edit-group">
               <label>SL Point</label>
@@ -2262,6 +2381,63 @@ function openInBrowser(url) {
   display: flex;
   gap: 20px;
   flex-wrap: wrap;
+}
+.time-range-row {
+  align-items: flex-start;
+  gap: 10px;
+}
+.time-ranges-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.time-range-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.time-input {
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  font-size: 0.85rem;
+  width: 80px;
+  outline: none;
+  cursor: pointer;
+}
+.time-dash {
+  color: var(--text-3);
+  font-size: 0.9rem;
+}
+.btn-remove-range {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0 2px;
+  line-height: 1;
+}
+.btn-remove-range:hover {
+  color: var(--neg-text);
+}
+.btn-add-range {
+  background: none;
+  border: 1px dashed var(--border-soft);
+  border-radius: 6px;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 4px 10px;
+}
+.btn-add-range:hover {
+  border-color: var(--text-2);
+  color: var(--text-1);
 }
 .checkbox-row {
   display: flex;
@@ -2678,6 +2854,18 @@ tr.row-loss td {
 .neg {
   color: var(--neg-text);
 }
+.manual-rr-badge {
+  display: inline-block;
+  margin-left: 3px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: var(--accent, #6c63ff);
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 3px;
+  vertical-align: middle;
+  opacity: 0.85;
+}
 
 .result-cell.win {
   color: var(--win-text);
@@ -2704,6 +2892,49 @@ tr.row-loss td {
 .btn-delete:hover {
   color: var(--neg-text);
   border-color: var(--neg-text);
+}
+.sel-check-th,
+.sel-check-cell {
+  width: 28px;
+  text-align: center;
+  padding: 2px 4px;
+}
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: color-mix(in srgb, var(--neg-text) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--neg-text) 40%, transparent);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--text-1);
+}
+.btn-bulk-delete {
+  background: var(--neg-text);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.btn-bulk-delete:hover {
+  opacity: 0.85;
+}
+.btn-bulk-clear {
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+.btn-bulk-clear:hover {
+  border-color: var(--text-2);
 }
 tr.row-excluded {
   opacity: 0.6;

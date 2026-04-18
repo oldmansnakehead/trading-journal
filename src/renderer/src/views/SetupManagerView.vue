@@ -395,6 +395,29 @@ async function unlinkRRType(setupId, rrName) {
   await loadAll()
 }
 
+// ── Playbook ──────────────────────────────────────────────────────────────────
+const playbookSetupId = ref('')
+const playbookText = ref('')
+const playbookSaving = ref(false)
+
+async function onPlaybookSetupChange() {
+  if (!playbookSetupId.value) { playbookText.value = ''; return }
+  playbookText.value = await window.api.getSetupPlaybook(Number(playbookSetupId.value))
+}
+
+async function savePlaybook() {
+  if (!playbookSetupId.value) return
+  playbookSaving.value = true
+  try {
+    await window.api.updateSetupPlaybook(Number(playbookSetupId.value), playbookText.value)
+    flashMsg('Playbook saved.')
+  } catch (e) {
+    flashError(e.message)
+  } finally {
+    playbookSaving.value = false
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function flashMsg(m) {
   msg.value = m
@@ -676,6 +699,36 @@ function flashError(e) {
           No session ranges configured for this setup.
         </p>
         <p v-else class="empty">Select a setup to view / add session time ranges.</p>
+      </section>
+
+      <!-- ── Setup Playbook ───────────────────────────────────────────── -->
+      <section class="card wide">
+        <h3>Setup Playbook</h3>
+        <p class="hint">
+          บันทึกหลักการเล่น กฎการเข้า/ออก และเงื่อนไขต่างๆ ของแต่ละ Setup ไว้อ้างอิงตอนบันทึก Trade
+        </p>
+        <div class="playbook-row">
+          <select v-model="playbookSetupId" @change="onPlaybookSetupChange">
+            <option value="" disabled>เลือก Setup…</option>
+            <option v-for="s in setups" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+        </div>
+        <textarea
+          v-if="playbookSetupId"
+          v-model="playbookText"
+          class="playbook-textarea"
+          placeholder="เขียนหลักการเล่น กฎการเข้าออก เงื่อนไข confluence ฯลฯ…"
+          rows="14"
+          @keydown.ctrl.s.prevent="savePlaybook"
+          @keydown.meta.s.prevent="savePlaybook"
+        ></textarea>
+        <p v-else class="empty">เลือก Setup เพื่อเขียนหรือแก้ไข Playbook</p>
+        <div v-if="playbookSetupId" class="playbook-actions">
+          <span class="playbook-hint">Ctrl+S เพื่อบันทึก</span>
+          <button class="btn-save btn-save--purple" :disabled="playbookSaving" @click="savePlaybook">
+            {{ playbookSaving ? 'Saving…' : 'Save Playbook' }}
+          </button>
+        </div>
       </section>
 
       <!-- ── RR Types ────────────────────────────────────────────────── -->
@@ -1084,6 +1137,53 @@ function flashError(e) {
 .btn-save--orange {
   background: #7c2d12;
   color: #fb923c;
+}
+.btn-save--purple {
+  background: #3b0764;
+  color: #c084fc;
+}
+.btn-save--purple:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Playbook section */
+.playbook-row {
+  margin-bottom: 10px;
+}
+.playbook-row select {
+  width: 100%;
+  max-width: 280px;
+}
+.playbook-textarea {
+  width: 100%;
+  min-height: 240px;
+  padding: 12px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  color: var(--text-1);
+  font-size: 0.92rem;
+  line-height: 1.6;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.playbook-textarea:focus {
+  border-color: var(--accent, #6c63ff);
+}
+.playbook-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+.playbook-hint {
+  font-size: 0.78rem;
+  color: var(--text-3, #555);
 }
 .link-chip--orange {
   background: #431407;

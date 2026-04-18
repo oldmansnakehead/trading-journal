@@ -18,6 +18,9 @@ const api = {
   unlinkCustomTag: (setupId, customTagId) =>
     ipcRenderer.invoke('setups:unlinkCustomTag', { setupId, customTagId }),
   getCustomTagsForSetup: (setupId) => ipcRenderer.invoke('setups:getCustomTags', setupId),
+  getSetupPlaybook: (setupId) => ipcRenderer.invoke('setups:getPlaybook', setupId),
+  updateSetupPlaybook: (setupId, playbook) =>
+    ipcRenderer.invoke('setups:updatePlaybook', { setupId, playbook }),
 
   // ── Strategies ────────────────────────────────────────────────────────────
   getAllStrategies: () => ipcRenderer.invoke('strategies:getAll'),

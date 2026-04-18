@@ -116,6 +116,18 @@ export function registerSetupHandlers() {
     return { ok: true }
   })
 
+  // ── Playbook (long-form notes per setup) ─────────────────────────────────
+
+  handle('setups:getPlaybook', (_event, setupId) => {
+    const row = db.prepare('SELECT playbook FROM TradeSetups WHERE id = ?').get(setupId)
+    return row?.playbook ?? ''
+  })
+
+  handle('setups:updatePlaybook', (_event, { setupId, playbook }) => {
+    db.prepare('UPDATE TradeSetups SET playbook = ? WHERE id = ?').run(playbook || null, setupId)
+    return { ok: true }
+  })
+
   // ── Delete ────────────────────────────────────────────────────────────────
 
   handle('setups:delete', (_event, id) => {
